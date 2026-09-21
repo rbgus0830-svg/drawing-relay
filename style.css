@@ -1,0 +1,42 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: Arial, sans-serif;
+  background: #f5f7fb;
+  color: #222;
+}
+
+.home {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 20px;
+}
+
+.home h1 {
+  font-size: 48px;
+  margin: 0;
+}
+
+.home p {
+  font-size: 20px;
+  color: #666;
+}
+
+.menu {
+  display: flex;
+  gap: 16px;
+}
+
+button {
+  border: none;
+  border-radius: 12px;
+  padding: 16px 28px;
+  font-size: 18px;
+  cursor: pointer;
+}
