@@ -20,7 +20,9 @@
   <main class="home">
     <h1>그림 릴레이</h1>
 
-    <p>친구들과 이어 그리는 그림 게임</p>
+    <p>
+      친구들과 이어 그리는 그림 게임
+    </p>
 
     <!-- 게임방 생성 메뉴 -->
     <div class="menu">
@@ -42,12 +44,18 @@
     </div>
 
     <!-- Firebase 연결 및 방 생성 상태 -->
-    <p id="appStatus" role="status">
+    <p
+      id="appStatus"
+      role="status"
+    >
       Firebase에 연결하는 중입니다...
     </p>
 
     <!-- 방 생성 결과 -->
-    <section id="roomResult" hidden>
+    <section
+      id="roomResult"
+      hidden
+    >
       <h2>방이 만들어졌습니다</h2>
 
       <p>
@@ -57,20 +65,31 @@
 
       <p>
         초대 주소:
-        <a id="roomLink" href=""></a>
+        <a
+          id="roomLink"
+          href=""
+        ></a>
       </p>
     </section>
 
     <!-- 방장 전용 실시간 대기실 -->
-    <section id="hostLobby" hidden>
+    <section
+      id="hostLobby"
+      hidden
+    >
       <h2>방장 대기실</h2>
 
       <p>
         참가 인원:
-        <strong id="playerCount">0 / 0</strong>
+        <strong id="playerCount">
+          0 / 0
+        </strong>
       </p>
 
-      <p id="hostLobbyStatus" role="status">
+      <p
+        id="hostLobbyStatus"
+        role="status"
+      >
         학생의 참가를 기다리고 있습니다.
       </p>
 
@@ -120,11 +139,17 @@
         방 참가하기
       </button>
 
-      <p id="joinStatus" role="status"></p>
+      <p
+        id="joinStatus"
+        role="status"
+      ></p>
     </section>
 
     <!-- 학생 참가 완료 결과 -->
-    <section id="joinedRoomResult" hidden>
+    <section
+      id="joinedRoomResult"
+      hidden
+    >
       <h2>참가 완료</h2>
 
       <p>
