@@ -9,6 +9,7 @@ import {
   set,
   get,
   update,
+  onValue,
   serverTimestamp
 } from "https://www.gstatic.com/firebasejs/12.2.1/firebase-database.js";
 
@@ -32,6 +33,7 @@ export {
   set,
   get,
   update,
+  onValue,
   serverTimestamp
 };
 

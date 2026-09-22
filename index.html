@@ -2,87 +2,148 @@
 <html lang="ko">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0"
+  >
+
   <title>그림 릴레이</title>
-  <link rel="stylesheet" href="style.css">
+
+  <link
+    rel="stylesheet"
+    href="style.css"
+  >
 </head>
 
 <body>
   <main class="home">
     <h1>그림 릴레이</h1>
+
     <p>친구들과 이어 그리는 그림 게임</p>
 
+    <!-- 게임방 생성 메뉴 -->
     <div class="menu">
-  <button id="classGameBtn" disabled>학급 게임</button>
-  <button id="groupGameBtn" disabled>모둠 게임</button>
-</div>
+      <button
+        id="classGameBtn"
+        type="button"
+        disabled
+      >
+        학급 게임
+      </button>
 
-<p id="appStatus" role="status">
-  Firebase에 연결하는 중입니다...
-</p>
+      <button
+        id="groupGameBtn"
+        type="button"
+        disabled
+      >
+        모둠 게임
+      </button>
+    </div>
 
-<section id="roomResult" hidden>
-  <h2>방이 만들어졌습니다</h2>
+    <!-- Firebase 연결 및 방 생성 상태 -->
+    <p id="appStatus" role="status">
+      Firebase에 연결하는 중입니다...
+    </p>
 
-  <p>
-    방 코드:
-    <strong id="roomCode"></strong>
-  </p>
+    <!-- 방 생성 결과 -->
+    <section id="roomResult" hidden>
+      <h2>방이 만들어졌습니다</h2>
 
-  <p>
-    초대 주소:
-    <a id="roomLink" href=""></a>
-  </p>
-</section>
-<hr>
+      <p>
+        방 코드:
+        <strong id="roomCode"></strong>
+      </p>
 
-<section id="joinRoomSection">
-  <h2>게임방 참가</h2>
+      <p>
+        초대 주소:
+        <a id="roomLink" href=""></a>
+      </p>
+    </section>
 
-  <div>
-    <label for="joinRoomCode">방 코드</label>
-    <input
-      id="joinRoomCode"
-      type="text"
-      maxlength="4"
-      autocomplete="off"
-      placeholder="예: EBXT"
-    >
-  </div>
+    <!-- 방장 전용 실시간 대기실 -->
+    <section id="hostLobby" hidden>
+      <h2>방장 대기실</h2>
 
-  <div>
-    <label for="studentNumber">학생번호</label>
-    <input
-      id="studentNumber"
-      type="text"
-      inputmode="numeric"
-      maxlength="2"
-      autocomplete="off"
-      placeholder="예: 01"
-    >
-  </div>
+      <p>
+        참가 인원:
+        <strong id="playerCount">0 / 0</strong>
+      </p>
 
-  <button id="joinRoomBtn" disabled>
-    방 참가하기
-  </button>
+      <p id="hostLobbyStatus" role="status">
+        학생의 참가를 기다리고 있습니다.
+      </p>
 
-  <p id="joinStatus" role="status"></p>
-</section>
+      <ul id="playerList"></ul>
+    </section>
 
-<section id="joinedRoomResult" hidden>
-  <h2>참가 완료</h2>
-  <p>
-    방 코드:
-    <strong id="joinedRoomCode"></strong>
-  </p>
-  <p>
-    학생번호:
-    <strong id="joinedStudentNumber"></strong>
-  </p>
-  <p id="joinedRoomType"></p>
-</section>
+    <hr>
+
+    <!-- 학생용 방 참가 화면 -->
+    <section id="joinRoomSection">
+      <h2>게임방 참가</h2>
+
+      <div>
+        <label for="joinRoomCode">
+          방 코드
+        </label>
+
+        <input
+          id="joinRoomCode"
+          type="text"
+          maxlength="4"
+          autocomplete="off"
+          placeholder="예: EBXT"
+        >
+      </div>
+
+      <div>
+        <label for="studentNumber">
+          학생번호
+        </label>
+
+        <input
+          id="studentNumber"
+          type="text"
+          inputmode="numeric"
+          maxlength="2"
+          autocomplete="off"
+          placeholder="예: 01"
+        >
+      </div>
+
+      <button
+        id="joinRoomBtn"
+        type="button"
+        disabled
+      >
+        방 참가하기
+      </button>
+
+      <p id="joinStatus" role="status"></p>
+    </section>
+
+    <!-- 학생 참가 완료 결과 -->
+    <section id="joinedRoomResult" hidden>
+      <h2>참가 완료</h2>
+
+      <p>
+        방 코드:
+        <strong id="joinedRoomCode"></strong>
+      </p>
+
+      <p>
+        학생번호:
+        <strong id="joinedStudentNumber"></strong>
+      </p>
+
+      <p id="joinedRoomType"></p>
+    </section>
   </main>
 
-  <script type="module" src="app.js"></script>
+  <script
+    type="module"
+    src="app.js"
+  ></script>
 </body>
 </html>
