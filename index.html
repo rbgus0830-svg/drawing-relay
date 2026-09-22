@@ -13,9 +13,27 @@
     <p>친구들과 이어 그리는 그림 게임</p>
 
     <div class="menu">
-      <button id="classGameBtn">학급 게임</button>
-      <button id="groupGameBtn">모둠 게임</button>
-    </div>
+  <button id="classGameBtn" disabled>학급 게임</button>
+  <button id="groupGameBtn" disabled>모둠 게임</button>
+</div>
+
+<p id="appStatus" role="status">
+  Firebase에 연결하는 중입니다...
+</p>
+
+<section id="roomResult" hidden>
+  <h2>방이 만들어졌습니다</h2>
+
+  <p>
+    방 코드:
+    <strong id="roomCode"></strong>
+  </p>
+
+  <p>
+    초대 주소:
+    <a id="roomLink" href=""></a>
+  </p>
+</section>
   </main>
 
   <script type="module" src="app.js"></script>
