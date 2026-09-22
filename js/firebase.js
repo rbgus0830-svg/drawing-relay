@@ -15,7 +15,8 @@ import {
   update,
   onValue,
   onDisconnect,
-  serverTimestamp
+  serverTimestamp,
+  runTransaction
 } from "https://www.gstatic.com/firebasejs/12.2.1/firebase-database.js";
 
 const firebaseConfig = {
@@ -43,7 +44,8 @@ export {
   update,
   onValue,
   onDisconnect,
-  serverTimestamp
+  serverTimestamp,
+  runTransaction
 };
 
 export async function loginAnonymously() {

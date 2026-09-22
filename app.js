@@ -47,6 +47,11 @@ const hostLobbyStatus =
 const playerList =
   document.getElementById("playerList");
 
+const startGameBtn =
+  document.getElementById("startGameBtn");
+const startGameStatus =
+  document.getElementById("startGameStatus");
+
 // ========================================
 // 방 참가 화면
 // ========================================
@@ -89,6 +94,7 @@ const STUDENT_NUMBER_PATTERN =
   /^(0[1-9]|[1-3][0-9]|40)$/;
 
 const MAX_CREATE_ATTEMPTS = 5;
+const MIN_PLAYERS_TO_START = 2;
 
 // ========================================
 // 앱 상태
@@ -97,6 +103,20 @@ const MAX_CREATE_ATTEMPTS = 5;
 let currentUser = null;
 let isCreatingRoom = false;
 let isJoiningRoom = false;
+
+let currentHostRoomCode = null;
+let currentHostRoomStatus = null;
+let currentConnectedPlayerCount = 0;
+let isStartingGame = false;
+
+let stopHostLobbyListener = null;
+let stopHostRoomStatusListener = null;
+
+let stopJoinedRoomStatusListener = null;
+
+let stopPlayerPresenceListener = null;
+let playerPresenceDisconnect = null;
+let activePlayerConnectedRef = null;
 
 // 현재 감시 중인 대기실의 구독 해제 함수
 let stopHostLobbyListener = null;
@@ -254,6 +274,63 @@ function isStudentNumberAllowed(
   return false;
 }
 
+function updateStartGameButton() {
+  const canStart =
+    currentHostRoomCode !== null &&
+    currentHostRoomStatus === "LOBBY" &&
+    currentConnectedPlayerCount >=
+      MIN_PLAYERS_TO_START &&
+    !isStartingGame;
+
+  startGameBtn.disabled = !canStart;
+
+  if (isStartingGame) {
+    startGameStatus.textContent =
+      "게임을 시작하는 중입니다...";
+    return;
+  }
+
+  if (
+    currentHostRoomStatus === "PLAYING"
+  ) {
+    startGameStatus.textContent =
+      "게임이 시작되었습니다.";
+    return;
+  }
+
+  if (
+    currentHostRoomStatus === "FINISHED"
+  ) {
+    startGameStatus.textContent =
+      "게임이 종료되었습니다.";
+    return;
+  }
+
+  if (
+    currentHostRoomStatus !== "LOBBY"
+  ) {
+    startGameStatus.textContent =
+      "방 상태를 확인하는 중입니다...";
+    return;
+  }
+
+  if (
+    currentConnectedPlayerCount <
+    MIN_PLAYERS_TO_START
+  ) {
+    const requiredPlayerCount =
+      MIN_PLAYERS_TO_START -
+      currentConnectedPlayerCount;
+
+    startGameStatus.textContent =
+      `접속 중인 참가자가 ${requiredPlayerCount}명 더 필요합니다.`;
+    return;
+  }
+
+  startGameStatus.textContent =
+    `${currentConnectedPlayerCount}명이 접속 중입니다. 게임을 시작할 수 있습니다.`;
+}
+
 // ========================================
 // 방장 실시간 대기실
 // ========================================
@@ -262,21 +339,30 @@ function watchHostLobby(
   roomCode,
   maxPlayers
 ) {
-  // 이전에 감시하던 방이 있으면
-  // 구독을 해제합니다.
   if (stopHostLobbyListener) {
     stopHostLobbyListener();
     stopHostLobbyListener = null;
   }
+
+  if (stopHostRoomStatusListener) {
+    stopHostRoomStatusListener();
+    stopHostRoomStatusListener = null;
+  }
+
+  currentHostRoomCode = roomCode;
+  currentHostRoomStatus = "LOBBY";
+  currentConnectedPlayerCount = 0;
+  isStartingGame = false;
 
   hostLobby.hidden = false;
   playerList.replaceChildren();
 
   playerCount.textContent =
     `0 / ${maxPlayers}`;
-
   hostLobbyStatus.textContent =
     "학생의 참가를 기다리고 있습니다.";
+
+  updateStartGameButton();
 
   const playersRef = ref(
     db,
@@ -309,6 +395,14 @@ function watchHostLobby(
             }
           );
 
+      const connectedPlayers =
+        players.filter((player) => {
+          return player.connected === true;
+        });
+
+      currentConnectedPlayerCount =
+        connectedPlayers.length;
+
       playerList.replaceChildren();
 
       for (const player of players) {
@@ -318,7 +412,10 @@ function watchHostLobby(
         listItem.textContent =
           `${player.number}번`;
 
-        if (player.connected === false) {
+        if (player.connected === true) {
+          listItem.textContent +=
+            " · 접속 중";
+        } else {
           listItem.textContent +=
             " · 연결 끊김";
         }
@@ -327,24 +424,46 @@ function watchHostLobby(
       }
 
       playerCount.textContent =
-        `${players.length} / ${maxPlayers}`;
+        `${connectedPlayers.length} / ${maxPlayers}`;
 
-      if (players.length === 0) {
+      if (
+        currentHostRoomStatus ===
+        "PLAYING"
+      ) {
+        hostLobbyStatus.textContent =
+          "게임이 시작되었습니다.";
+      } else if (
+        currentHostRoomStatus ===
+        "FINISHED"
+      ) {
+        hostLobbyStatus.textContent =
+          "게임이 종료되었습니다.";
+      } else if (
+        connectedPlayers.length === 0
+      ) {
         hostLobbyStatus.textContent =
           "학생의 참가를 기다리고 있습니다.";
       } else if (
-        players.length >= maxPlayers
+        connectedPlayers.length >=
+        maxPlayers
       ) {
         hostLobbyStatus.textContent =
-          "참가 인원이 모두 찼습니다.";
+          "접속 인원이 모두 찼습니다.";
       } else {
         hostLobbyStatus.textContent =
-          `${players.length}명이 참가했습니다.`;
+          `${connectedPlayers.length}명이 접속 중입니다.`;
       }
+
+      updateStartGameButton();
 
       console.log(
         "대기실 참가자 갱신:",
-        players
+        {
+          totalPlayers: players.length,
+          connectedPlayers:
+            connectedPlayers.length,
+          players
+        }
       );
     },
     (error) => {
@@ -353,12 +472,286 @@ function watchHostLobby(
         error
       );
 
-      if (isPermissionDeniedError(error)) {
+      currentConnectedPlayerCount = 0;
+      updateStartGameButton();
+
+      if (
+        isPermissionDeniedError(error)
+      ) {
         hostLobbyStatus.textContent =
           "참가자 목록을 읽을 권한이 없습니다.";
       } else {
         hostLobbyStatus.textContent =
           "참가자 목록을 불러오지 못했습니다.";
+      }
+    }
+  );
+
+  const roomStatusRef = ref(
+    db,
+    `rooms/${roomCode}/meta/status`
+  );
+
+  stopHostRoomStatusListener = onValue(
+    roomStatusRef,
+    (snapshot) => {
+      currentHostRoomStatus =
+        snapshot.val();
+
+      if (
+        currentHostRoomStatus ===
+        "PLAYING"
+      ) {
+        hostLobbyStatus.textContent =
+          "게임이 시작되었습니다.";
+      } else if (
+        currentHostRoomStatus ===
+        "FINISHED"
+      ) {
+        hostLobbyStatus.textContent =
+          "게임이 종료되었습니다.";
+      }
+
+      updateStartGameButton();
+
+      console.log(
+        "방 상태 갱신:",
+        currentHostRoomStatus
+      );
+    },
+    (error) => {
+      console.error(
+        "방 상태 읽기 실패:",
+        error
+      );
+
+      currentHostRoomStatus = null;
+      updateStartGameButton();
+
+      if (
+        isPermissionDeniedError(error)
+      ) {
+        startGameStatus.textContent =
+          "방 상태를 읽을 권한이 없습니다.";
+      } else {
+        startGameStatus.textContent =
+          "방 상태를 확인하지 못했습니다.";
+      }
+    }
+  );
+}
+
+async function startGame() {
+  if (isStartingGame) {
+    return;
+  }
+
+  if (!currentUser) {
+    startGameStatus.textContent =
+      "Firebase 인증이 완료되지 않았습니다.";
+    return;
+  }
+
+  if (!currentHostRoomCode) {
+    startGameStatus.textContent =
+      "시작할 방 정보가 없습니다.";
+    return;
+  }
+
+  if (
+    currentHostRoomStatus !== "LOBBY"
+  ) {
+    startGameStatus.textContent =
+      "이미 시작되었거나 시작할 수 없는 방입니다.";
+    updateStartGameButton();
+    return;
+  }
+
+  isStartingGame = true;
+  updateStartGameButton();
+
+  try {
+    /*
+     * 버튼 활성화 이후 참가자가 연결을
+     * 끊었을 수 있으므로 시작 직전에
+     * 참가자 목록을 다시 읽습니다.
+     */
+    const playersRef = ref(
+      db,
+      `rooms/${currentHostRoomCode}/players`
+    );
+
+    const playersSnapshot =
+      await get(playersRef);
+
+    const playersData =
+      playersSnapshot.val() ?? {};
+
+    const connectedPlayerCount =
+      Object.values(playersData)
+        .filter((player) => {
+          return (
+            player &&
+            typeof player.number ===
+              "string" &&
+            player.connected === true
+          );
+        })
+        .length;
+
+    currentConnectedPlayerCount =
+      connectedPlayerCount;
+
+    if (
+      connectedPlayerCount <
+      MIN_PLAYERS_TO_START
+    ) {
+      startGameStatus.textContent =
+        `접속 중인 참가자가 최소 ${MIN_PLAYERS_TO_START}명 필요합니다.`;
+      return;
+    }
+
+    const roomStatusRef = ref(
+      db,
+      `rooms/${currentHostRoomCode}/meta/status`
+    );
+
+    const transactionResult =
+      await runTransaction(
+        roomStatusRef,
+        (currentStatus) => {
+          /*
+           * 현재 상태가 LOBBY일 때만
+           * PLAYING으로 전환합니다.
+           *
+           * undefined를 반환하면
+           * 트랜잭션이 취소됩니다.
+           */
+          if (
+            currentStatus !== "LOBBY"
+          ) {
+            return undefined;
+          }
+
+          return "PLAYING";
+        },
+        {
+          applyLocally: false
+        }
+      );
+
+    if (!transactionResult.committed) {
+      const latestStatus =
+        transactionResult.snapshot.val();
+
+      currentHostRoomStatus =
+        latestStatus;
+
+      if (
+        latestStatus === "PLAYING"
+      ) {
+        startGameStatus.textContent =
+          "게임이 이미 시작되었습니다.";
+      } else {
+        startGameStatus.textContent =
+          "현재 방 상태에서는 게임을 시작할 수 없습니다.";
+      }
+
+      return;
+    }
+
+    currentHostRoomStatus = "PLAYING";
+
+    startGameStatus.textContent =
+      "게임을 시작했습니다.";
+    hostLobbyStatus.textContent =
+      "게임이 시작되었습니다.";
+
+    console.log(
+      "게임 시작 성공:",
+      {
+        roomCode:
+          currentHostRoomCode,
+        connectedPlayerCount
+      }
+    );
+
+    /*
+     * 추후 실제 게임 화면이 준비되면
+     * 이 위치에서 화면을 이동할 수 있습니다.
+     *
+     * 예:
+     * window.location.href =
+     *   `game.html?room=${currentHostRoomCode}`;
+     */
+  } catch (error) {
+    console.error(
+      "게임 시작 실패:",
+      error
+    );
+
+    if (
+      isPermissionDeniedError(error)
+    ) {
+      startGameStatus.textContent =
+        "게임 시작 권한이 거부되었습니다. Firebase Rules를 확인해 주세요.";
+    } else {
+      startGameStatus.textContent =
+        "게임을 시작하지 못했습니다. 잠시 후 다시 시도해 주세요.";
+    }
+  } finally {
+    isStartingGame = false;
+    updateStartGameButton();
+  }
+}
+
+function watchJoinedRoomStatus(roomCode) {
+  if (stopJoinedRoomStatusListener) {
+    stopJoinedRoomStatusListener();
+    stopJoinedRoomStatusListener = null;
+  }
+
+  const roomStatusRef = ref(
+    db,
+    `rooms/${roomCode}/meta/status`
+  );
+
+  stopJoinedRoomStatusListener = onValue(
+    roomStatusRef,
+    (snapshot) => {
+      const roomStatus =
+        snapshot.val();
+
+      if (roomStatus === "PLAYING") {
+        joinStatus.textContent =
+          "방장이 게임을 시작했습니다.";
+
+        /*
+         * 실제 학생용 게임 화면이 준비되면
+         * 여기서 화면을 이동합니다.
+         *
+         * 예:
+         * window.location.href =
+         *   `game.html?room=${roomCode}`;
+         */
+      } else if (
+        roomStatus === "FINISHED"
+      ) {
+        joinStatus.textContent =
+          "게임이 종료되었습니다.";
+      }
+    },
+    (error) => {
+      console.error(
+        "참가한 방 상태 감시 실패:",
+        error
+      );
+
+      if (
+        isPermissionDeniedError(error)
+      ) {
+        joinStatus.textContent =
+          "방 상태를 읽을 권한이 없습니다.";
       }
     }
   );
@@ -825,10 +1218,12 @@ async function joinRoom() {
       playerData
     );
 
-    await startPlayerPresence(
+        await startPlayerPresence(
       roomCode,
       studentNumber
     );
+
+    watchJoinedRoomStatus(roomCode);
 
     showJoinedRoom(
       roomCode,
@@ -933,6 +1328,13 @@ groupGameBtn.addEventListener(
   "click",
   () => {
     createRoom("group");
+  }
+);
+
+startGameBtn.addEventListener(
+  "click",
+  () => {
+    startGame();
   }
 );
 
