@@ -3,9 +3,12 @@ import {
   db,
   ref,
   set,
+  get,
+  update,
   serverTimestamp
 } from "./js/firebase.js";
 
+// 방 생성 화면
 const classGameBtn = document.getElementById("classGameBtn");
 const groupGameBtn = document.getElementById("groupGameBtn");
 const appStatus = document.getElementById("appStatus");
@@ -13,15 +16,26 @@ const roomResult = document.getElementById("roomResult");
 const roomCodeElement = document.getElementById("roomCode");
 const roomLinkElement = document.getElementById("roomLink");
 
+// 방 참가 화면
+const joinRoomCodeInput = document.getElementById("joinRoomCode");
+const studentNumberInput = document.getElementById("studentNumber");
+const joinRoomBtn = document.getElementById("joinRoomBtn");
+const joinStatus = document.getElementById("joinStatus");
+const joinedRoomResult = document.getElementById("joinedRoomResult");
+const joinedRoomCode = document.getElementById("joinedRoomCode");
+const joinedStudentNumber =
+  document.getElementById("joinedStudentNumber");
+const joinedRoomType = document.getElementById("joinedRoomType");
+
 const ROOM_CODE_CHARACTERS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+const ROOM_CODE_PATTERN = /^[A-HJ-NP-Z2-9]{4}$/;
+const STUDENT_NUMBER_PATTERN = /^(0[1-9]|[1-3][0-9]|40)$/;
 const MAX_CREATE_ATTEMPTS = 5;
 
 let currentUser = null;
 let isCreatingRoom = false;
+let isJoiningRoom = false;
 
-/**
- * 혼동하기 쉬운 I, O, 0, 1을 제외한 4자리 방 코드를 만듭니다.
- */
 function generateRoomCode() {
   let roomCode = "";
 
@@ -36,10 +50,6 @@ function generateRoomCode() {
   return roomCode;
 }
 
-/**
- * 방 코드가 포함된 초대 주소를 만듭니다.
- * 예: http://127.0.0.1:5500/?room=Q7KP
- */
 function createInvitationUrl(roomCode) {
   const invitationUrl = new URL(window.location.href);
 
@@ -48,7 +58,7 @@ function createInvitationUrl(roomCode) {
   return invitationUrl.toString();
 }
 
-function setButtonsDisabled(disabled) {
+function setCreateButtonsDisabled(disabled) {
   classGameBtn.disabled = disabled;
   groupGameBtn.disabled = disabled;
 }
@@ -62,23 +72,62 @@ function showCreatedRoom(roomCode) {
   roomResult.hidden = false;
 }
 
-/**
- * 보안 규칙의 !data.exists() 조건을 이용해
- * 기존 방을 덮어쓰지 않고 새 방만 생성합니다.
- */
+function readRoomCodeFromUrl() {
+  const url = new URL(window.location.href);
+  const roomCode = url.searchParams.get("room");
+
+  if (!roomCode) {
+    return;
+  }
+
+  const normalizedRoomCode = roomCode
+    .trim()
+    .toUpperCase();
+
+  if (ROOM_CODE_PATTERN.test(normalizedRoomCode)) {
+    joinRoomCodeInput.value = normalizedRoomCode;
+  }
+}
+
+function normalizeStudentNumber(value) {
+  const digitsOnly = value.replace(/\D/g, "").slice(0, 2);
+
+  if (digitsOnly.length === 1) {
+    return digitsOnly.padStart(2, "0");
+  }
+
+  return digitsOnly;
+}
+
+function showJoinedRoom(roomCode, studentNumber, roomType) {
+  joinedRoomCode.textContent = roomCode;
+  joinedStudentNumber.textContent = studentNumber;
+
+  joinedRoomType.textContent =
+    roomType === "class"
+      ? "학급 게임에 참가했습니다."
+      : "모둠 게임에 참가했습니다.";
+
+  joinedRoomResult.hidden = false;
+}
+
 async function createRoom(roomType) {
   if (!currentUser || isCreatingRoom) {
     return;
   }
 
   isCreatingRoom = true;
-  setButtonsDisabled(true);
+  setCreateButtonsDisabled(true);
   roomResult.hidden = true;
   appStatus.textContent = "방을 만드는 중입니다...";
 
   const maxPlayers = roomType === "class" ? 30 : 5;
 
-  for (let attempt = 1; attempt <= MAX_CREATE_ATTEMPTS; attempt += 1) {
+  for (
+    let attempt = 1;
+    attempt <= MAX_CREATE_ATTEMPTS;
+    attempt += 1
+  ) {
     const roomCode = generateRoomCode();
 
     const roomData = {
@@ -102,7 +151,7 @@ async function createRoom(roomType) {
       console.log("방 생성 성공:", roomCode, roomData);
 
       isCreatingRoom = false;
-      setButtonsDisabled(false);
+      setCreateButtonsDisabled(false);
       return;
     } catch (error) {
       console.warn(
@@ -116,12 +165,111 @@ async function createRoom(roomType) {
     "방을 만들지 못했습니다. 잠시 후 다시 시도해 주세요.";
 
   isCreatingRoom = false;
-  setButtonsDisabled(false);
+  setCreateButtonsDisabled(false);
+}
+
+async function joinRoom() {
+  if (!currentUser || isJoiningRoom) {
+    return;
+  }
+
+  const roomCode = joinRoomCodeInput.value
+    .trim()
+    .toUpperCase();
+
+  const studentNumber = normalizeStudentNumber(
+    studentNumberInput.value
+  );
+
+  joinRoomCodeInput.value = roomCode;
+  studentNumberInput.value = studentNumber;
+
+  if (!ROOM_CODE_PATTERN.test(roomCode)) {
+    joinStatus.textContent =
+      "방 코드는 영문과 숫자로 된 4자리입니다.";
+    return;
+  }
+
+  if (!STUDENT_NUMBER_PATTERN.test(studentNumber)) {
+    joinStatus.textContent =
+      "학생번호는 01부터 40까지 입력해 주세요.";
+    return;
+  }
+
+  isJoiningRoom = true;
+  joinRoomBtn.disabled = true;
+  joinedRoomResult.hidden = true;
+  joinStatus.textContent = "방을 확인하는 중입니다...";
+
+  try {
+    const metaSnapshot = await get(
+      ref(db, `rooms/${roomCode}/meta`)
+    );
+
+    if (!metaSnapshot.exists()) {
+      joinStatus.textContent =
+        "존재하지 않는 방 코드입니다.";
+
+      isJoiningRoom = false;
+      joinRoomBtn.disabled = false;
+      return;
+    }
+
+    const roomMeta = metaSnapshot.val();
+
+    if (roomMeta.status !== "LOBBY") {
+      joinStatus.textContent =
+        "이미 시작되었거나 참가할 수 없는 방입니다.";
+
+      isJoiningRoom = false;
+      joinRoomBtn.disabled = false;
+      return;
+    }
+
+    const updates = {};
+
+    updates[`rooms/${roomCode}/claims/${studentNumber}`] =
+      currentUser.uid;
+
+    updates[`rooms/${roomCode}/players/${studentNumber}`] = {
+      uid: currentUser.uid,
+      number: studentNumber,
+      joinedAt: serverTimestamp(),
+      connected: true
+    };
+
+    await update(ref(db), updates);
+
+    showJoinedRoom(
+      roomCode,
+      studentNumber,
+      roomMeta.type
+    );
+
+    joinStatus.textContent = "방 참가가 완료되었습니다.";
+
+    console.log("방 참가 성공:", {
+      roomCode,
+      studentNumber,
+      roomType: roomMeta.type
+    });
+  } catch (error) {
+    console.error("방 참가 실패:", error);
+
+    joinStatus.textContent =
+      "이미 사용 중인 학생번호이거나 참가할 수 없는 방입니다.";
+  } finally {
+    isJoiningRoom = false;
+    joinRoomBtn.disabled = false;
+  }
 }
 
 async function startApp() {
   try {
-    setButtonsDisabled(true);
+    setCreateButtonsDisabled(true);
+    joinRoomBtn.disabled = true;
+
+    readRoomCodeFromUrl();
 
     currentUser = await loginAnonymously();
 
@@ -131,12 +279,16 @@ async function startApp() {
     appStatus.textContent =
       "연결되었습니다. 만들 게임을 선택하세요.";
 
-    setButtonsDisabled(false);
+    setCreateButtonsDisabled(false);
+    joinRoomBtn.disabled = false;
   } catch (error) {
     console.error("Firebase 로그인 실패:", error);
 
     appStatus.textContent =
       "Firebase 연결에 실패했습니다. 페이지를 새로고침해 주세요.";
+
+    joinStatus.textContent =
+      "Firebase 연결에 실패하여 참가할 수 없습니다.";
   }
 }
 
@@ -146,6 +298,24 @@ classGameBtn.addEventListener("click", () => {
 
 groupGameBtn.addEventListener("click", () => {
   createRoom("group");
+});
+
+joinRoomBtn.addEventListener("click", () => {
+  joinRoom();
+});
+
+joinRoomCodeInput.addEventListener("input", () => {
+  joinRoomCodeInput.value = joinRoomCodeInput.value
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "")
+    .slice(0, 4);
+});
+
+studentNumberInput.addEventListener("input", () => {
+  studentNumberInput.value =
+    studentNumberInput.value
+      .replace(/\D/g, "")
+      .slice(0, 2);
 });
 
 startApp();

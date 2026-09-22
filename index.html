@@ -34,6 +34,53 @@
     <a id="roomLink" href=""></a>
   </p>
 </section>
+<hr>
+
+<section id="joinRoomSection">
+  <h2>게임방 참가</h2>
+
+  <div>
+    <label for="joinRoomCode">방 코드</label>
+    <input
+      id="joinRoomCode"
+      type="text"
+      maxlength="4"
+      autocomplete="off"
+      placeholder="예: EBXT"
+    >
+  </div>
+
+  <div>
+    <label for="studentNumber">학생번호</label>
+    <input
+      id="studentNumber"
+      type="text"
+      inputmode="numeric"
+      maxlength="2"
+      autocomplete="off"
+      placeholder="예: 01"
+    >
+  </div>
+
+  <button id="joinRoomBtn" disabled>
+    방 참가하기
+  </button>
+
+  <p id="joinStatus" role="status"></p>
+</section>
+
+<section id="joinedRoomResult" hidden>
+  <h2>참가 완료</h2>
+  <p>
+    방 코드:
+    <strong id="joinedRoomCode"></strong>
+  </p>
+  <p>
+    학생번호:
+    <strong id="joinedStudentNumber"></strong>
+  </p>
+  <p id="joinedRoomType"></p>
+</section>
   </main>
 
   <script type="module" src="app.js"></script>

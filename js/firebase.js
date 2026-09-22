@@ -7,6 +7,8 @@ import {
   getDatabase,
   ref,
   set,
+  get,
+  update,
   serverTimestamp
 } from "https://www.gstatic.com/firebasejs/12.2.1/firebase-database.js";
 
@@ -25,7 +27,13 @@ const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const db = getDatabase(app);
 
-export { ref, set, serverTimestamp };
+export {
+  ref,
+  set,
+  get,
+  update,
+  serverTimestamp
+};
 
 export async function loginAnonymously() {
   const result = await signInAnonymously(auth);
