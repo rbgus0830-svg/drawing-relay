@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0"
+  >
+  <title>그림 릴레이 게임</title>
+  <link
+    rel="stylesheet"
+    href="style.css"
+  >
+</head>
+<body>
+  <main class="home">
+    <h1>그림 릴레이</h1>
+
+    <p
+      id="gameStatus"
+      role="status"
+    >
+      게임 정보를 확인하는 중입니다...
+    </p>
+
+    <section
+      id="gameInfo"
+      hidden
+    >
+      <h2 id="gameRoleTitle">
+        게임 화면
+      </h2>
+
+      <p>
+        방 코드:
+        <strong id="gameRoomCode"></strong>
+      </p>
+
+      <p>
+        참가 역할:
+        <strong id="gameRole"></strong>
+      </p>
+
+      <p
+        id="gameStudentRow"
+        hidden
+      >
+        학생번호:
+        <strong id="gameStudentNumber"></strong>
+      </p>
+
+      <p>
+        방 상태:
+        <strong id="gameRoomStatus"></strong>
+      </p>
+    </section>
+
+    <section
+      id="hostGameSection"
+      hidden
+    >
+      <h2>방장 게임 관리</h2>
+      <p>
+        방장용 게임 진행 기능이 이곳에 표시됩니다.
+      </p>
+    </section>
+
+    <section
+      id="playerGameSection"
+      hidden
+    >
+      <h2>그림 그리기</h2>
+      <p>
+        학생용 캔버스가 이곳에 표시됩니다.
+      </p>
+    </section>
+
+    <p>
+      <a href="index.html">
+        처음 화면으로 돌아가기
+      </a>
+    </p>
+  </main>
+
+  <script
+    type="module"
+    src="game.js"
+  ></script>
+</body>
+</html>

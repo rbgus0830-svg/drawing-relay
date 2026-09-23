@@ -50,6 +50,7 @@ const playerList =
 
 const startGameBtn =
   document.getElementById("startGameBtn");
+
 const startGameStatus =
   document.getElementById("startGameStatus");
 
@@ -76,7 +77,9 @@ const joinedRoomCode =
   document.getElementById("joinedRoomCode");
 
 const joinedStudentNumber =
-  document.getElementById("joinedStudentNumber");
+  document.getElementById(
+    "joinedStudentNumber"
+  );
 
 const joinedRoomType =
   document.getElementById("joinedRoomType");
@@ -91,8 +94,13 @@ const ROOM_CODE_CHARACTERS =
 const ROOM_CODE_PATTERN =
   /^[A-HJ-NP-Z2-9]{4}$/;
 
+/*
+ * Firebase Rules 기준:
+ * 학급은 01~30, 모둠은 01~05입니다.
+ * 공통 입력 단계에서는 최대 30까지만 허용합니다.
+ */
 const STUDENT_NUMBER_PATTERN =
-  /^(0[1-9]|[1-3][0-9]|40)$/;
+  /^(0[1-9]|[12][0-9]|30)$/;
 
 const MAX_CREATE_ATTEMPTS = 5;
 const MIN_PLAYERS_TO_START = 2;
@@ -102,26 +110,73 @@ const MIN_PLAYERS_TO_START = 2;
 // ========================================
 
 let currentUser = null;
+
 let isCreatingRoom = false;
 let isJoiningRoom = false;
+let isStartingGame = false;
+let isMovingToGamePage = false;
 
 let currentHostRoomCode = null;
 let currentHostRoomStatus = null;
 let currentConnectedPlayerCount = 0;
-let isStartingGame = false;
 
 let stopHostLobbyListener = null;
 let stopHostRoomStatusListener = null;
-
 let stopJoinedRoomStatusListener = null;
-
 let stopPlayerPresenceListener = null;
+
 let playerPresenceDisconnect = null;
 let activePlayerConnectedRef = null;
 
 // ========================================
 // 공통 함수
 // ========================================
+
+function moveToGamePage(
+  roomCode,
+  studentNumber = null
+) {
+  if (isMovingToGamePage) {
+    return;
+  }
+
+  if (!ROOM_CODE_PATTERN.test(roomCode)) {
+    console.error(
+      "게임 화면 이동 실패: 잘못된 방 코드",
+      roomCode
+    );
+    return;
+  }
+
+  isMovingToGamePage = true;
+
+  const gameUrl = new URL(
+    "game.html",
+    window.location.href
+  );
+
+  /*
+   * 기존 URL의 검색 파라미터를 물려받지 않고
+   * 필요한 값만 명시적으로 설정합니다.
+   */
+  gameUrl.search = "";
+
+  gameUrl.searchParams.set(
+    "room",
+    roomCode
+  );
+
+  if (studentNumber) {
+    gameUrl.searchParams.set(
+      "player",
+      studentNumber
+    );
+  }
+
+  window.location.replace(
+    gameUrl.toString()
+  );
+}
 
 function generateRoomCode() {
   let roomCode = "";
@@ -133,7 +188,7 @@ function generateRoomCode() {
   ) {
     const randomIndex = Math.floor(
       Math.random() *
-      ROOM_CODE_CHARACTERS.length
+        ROOM_CODE_CHARACTERS.length
     );
 
     roomCode +=
@@ -144,8 +199,12 @@ function generateRoomCode() {
 }
 
 function createInvitationUrl(roomCode) {
-  const invitationUrl =
-    new URL(window.location.href);
+  const invitationUrl = new URL(
+    "index.html",
+    window.location.href
+  );
+
+  invitationUrl.search = "";
 
   invitationUrl.searchParams.set(
     "room",
@@ -236,10 +295,18 @@ function isPermissionDeniedError(error) {
       .toUpperCase();
 
   return (
-    errorCode.includes("PERMISSION_DENIED") ||
-    errorCode.includes("PERMISSION-DENIED") ||
-    errorMessage.includes("PERMISSION_DENIED") ||
-    errorMessage.includes("PERMISSION DENIED")
+    errorCode.includes(
+      "PERMISSION_DENIED"
+    ) ||
+    errorCode.includes(
+      "PERMISSION-DENIED"
+    ) ||
+    errorMessage.includes(
+      "PERMISSION_DENIED"
+    ) ||
+    errorMessage.includes(
+      "PERMISSION DENIED"
+    )
   );
 }
 
@@ -265,6 +332,30 @@ function isStudentNumberAllowed(
   }
 
   return false;
+}
+
+/*
+ * 방 생성 실패가 실제 방 코드 충돌 때문인지
+ * 확인합니다.
+ */
+async function roomAlreadyExists(roomCode) {
+  try {
+    const hostSnapshot = await get(
+      ref(
+        db,
+        `rooms/${roomCode}/hostUid`
+      )
+    );
+
+    return hostSnapshot.exists();
+  } catch (error) {
+    console.warn(
+      "방 존재 여부 확인 실패:",
+      error
+    );
+
+    return false;
+  }
 }
 
 function updateStartGameButton() {
@@ -317,6 +408,7 @@ function updateStartGameButton() {
 
     startGameStatus.textContent =
       `접속 중인 참가자가 ${requiredPlayerCount}명 더 필요합니다.`;
+
     return;
   }
 
@@ -346,12 +438,14 @@ function watchHostLobby(
   currentHostRoomStatus = "LOBBY";
   currentConnectedPlayerCount = 0;
   isStartingGame = false;
+  isMovingToGamePage = false;
 
   hostLobby.hidden = false;
   playerList.replaceChildren();
 
   playerCount.textContent =
     `0 / ${maxPlayers}`;
+
   hostLobbyStatus.textContent =
     "학생의 참가를 기다리고 있습니다.";
 
@@ -373,7 +467,8 @@ function watchHostLobby(
           .filter((player) => {
             return (
               player &&
-              typeof player.number === "string"
+              typeof player.number ===
+                "string"
             );
           })
           .sort(
@@ -535,7 +630,10 @@ function watchHostLobby(
 }
 
 async function startGame() {
-  if (isStartingGame) {
+  if (
+    isStartingGame ||
+    isMovingToGamePage
+  ) {
     return;
   }
 
@@ -556,6 +654,7 @@ async function startGame() {
   ) {
     startGameStatus.textContent =
       "이미 시작되었거나 시작할 수 없는 방입니다.";
+
     updateStartGameButton();
     return;
   }
@@ -565,9 +664,8 @@ async function startGame() {
 
   try {
     /*
-     * 버튼 활성화 이후 참가자가 연결을
-     * 끊었을 수 있으므로 시작 직전에
-     * 참가자 목록을 다시 읽습니다.
+     * 버튼 활성화 후 학생 연결이 끊겼을 수
+     * 있으므로 시작 직전에 다시 확인합니다.
      */
     const playersRef = ref(
       db,
@@ -601,6 +699,7 @@ async function startGame() {
     ) {
       startGameStatus.textContent =
         `접속 중인 참가자가 최소 ${MIN_PLAYERS_TO_START}명 필요합니다.`;
+
       return;
     }
 
@@ -613,13 +712,6 @@ async function startGame() {
       await runTransaction(
         roomStatusRef,
         (currentStatus) => {
-          /*
-           * 현재 상태가 LOBBY일 때만
-           * PLAYING으로 전환합니다.
-           *
-           * undefined를 반환하면
-           * 트랜잭션이 취소됩니다.
-           */
           if (
             currentStatus !== "LOBBY"
           ) {
@@ -657,6 +749,7 @@ async function startGame() {
 
     startGameStatus.textContent =
       "게임을 시작했습니다.";
+
     hostLobbyStatus.textContent =
       "게임이 시작되었습니다.";
 
@@ -669,14 +762,9 @@ async function startGame() {
       }
     );
 
-    /*
-     * 추후 실제 게임 화면이 준비되면
-     * 이 위치에서 화면을 이동할 수 있습니다.
-     *
-     * 예:
-     * window.location.href =
-     *   `game.html?room=${currentHostRoomCode}`;
-     */
+    moveToGamePage(
+      currentHostRoomCode
+    );
   } catch (error) {
     console.error(
       "게임 시작 실패:",
@@ -698,7 +786,10 @@ async function startGame() {
   }
 }
 
-function watchJoinedRoomStatus(roomCode) {
+function watchJoinedRoomStatus(
+  roomCode,
+  studentNumber
+) {
   if (stopJoinedRoomStatusListener) {
     stopJoinedRoomStatusListener();
     stopJoinedRoomStatusListener = null;
@@ -720,16 +811,18 @@ function watchJoinedRoomStatus(roomCode) {
           "방장이 게임을 시작했습니다.";
 
         /*
-         * 실제 학생용 게임 화면이 준비되면
-         * 여기서 화면을 이동합니다.
-         *
-         * 예:
-         * window.location.href =
-         *   `game.html?room=${roomCode}`;
+         * 입력창 값을 다시 읽지 않고 실제 참가에
+         * 성공했던 학생번호를 사용합니다.
          */
-      } else if (
-        roomStatus === "FINISHED"
-      ) {
+        moveToGamePage(
+          roomCode,
+          studentNumber
+        );
+
+        return;
+      }
+
+      if (roomStatus === "FINISHED") {
         joinStatus.textContent =
           "게임이 종료되었습니다.";
       }
@@ -745,6 +838,9 @@ function watchJoinedRoomStatus(roomCode) {
       ) {
         joinStatus.textContent =
           "방 상태를 읽을 권한이 없습니다.";
+      } else {
+        joinStatus.textContent =
+          "방 상태를 확인하지 못했습니다.";
       }
     }
   );
@@ -777,78 +873,94 @@ async function createRoom(roomType) {
   const maxPlayers =
     roomType === "class" ? 30 : 5;
 
-  for (
-    let attempt = 1;
-    attempt <= MAX_CREATE_ATTEMPTS;
-    attempt += 1
-  ) {
-    const roomCode =
-      generateRoomCode();
+  try {
+    for (
+      let attempt = 1;
+      attempt <= MAX_CREATE_ATTEMPTS;
+      attempt += 1
+    ) {
+      const roomCode =
+        generateRoomCode();
 
-    const roomData = {
-      hostUid: currentUser.uid,
-      meta: {
-        type: roomType,
-        status: "LOBBY",
-        maxPlayers,
-        relaySteps: 4,
-        stepDurationMs: 60000,
-        createdAt: serverTimestamp()
-      }
-    };
+      const roomData = {
+        hostUid: currentUser.uid,
+        meta: {
+          type: roomType,
+          status: "LOBBY",
+          maxPlayers,
+          relaySteps: 4,
+          stepDurationMs: 60000,
+          createdAt: serverTimestamp()
+        }
+      };
 
-    try {
-      await set(
-        ref(
-          db,
-          `rooms/${roomCode}`
-        ),
-        roomData
-      );
+      try {
+        await set(
+          ref(
+            db,
+            `rooms/${roomCode}`
+          ),
+          roomData
+        );
 
-      showCreatedRoom(roomCode);
+        showCreatedRoom(roomCode);
 
-      watchHostLobby(
-        roomCode,
-        maxPlayers
-      );
+        watchHostLobby(
+          roomCode,
+          maxPlayers
+        );
 
-      appStatus.textContent =
-        "방 생성이 완료되었습니다.";
-
-      console.log(
-        "방 생성 성공:",
-        roomCode,
-        roomData
-      );
-
-      isCreatingRoom = false;
-      setCreateButtonsDisabled(false);
-      return;
-    } catch (error) {
-      console.warn(
-        `방 생성 시도 ${attempt}/${MAX_CREATE_ATTEMPTS} 실패:`,
-        error
-      );
-
-      if (
-        isPermissionDeniedError(error)
-      ) {
         appStatus.textContent =
-          "방 생성 권한이 거부되었습니다. Firebase Rules를 확인해 주세요.";
+          "방 생성이 완료되었습니다.";
 
-        isCreatingRoom = false;
-        setCreateButtonsDisabled(false);
+        console.log(
+          "방 생성 성공:",
+          roomCode,
+          roomData
+        );
+
         return;
+      } catch (error) {
+        console.warn(
+          `방 생성 시도 ${attempt}/${MAX_CREATE_ATTEMPTS} 실패:`,
+          error
+        );
+
+        if (
+          isPermissionDeniedError(error)
+        ) {
+          /*
+           * 이미 같은 코드의 방이 있으면 새 코드를
+           * 생성하여 다시 시도합니다.
+           */
+          const exists =
+            await roomAlreadyExists(
+              roomCode
+            );
+
+          if (exists) {
+            console.warn(
+              "방 코드 충돌. 새 코드로 재시도:",
+              roomCode
+            );
+
+            continue;
+          }
+
+          appStatus.textContent =
+            "방 생성 권한이 거부되었습니다. Firebase Rules를 확인해 주세요.";
+
+          return;
+        }
       }
     }
+
+    appStatus.textContent =
+      "방을 만들지 못했습니다. 잠시 후 다시 시도해 주세요.";
+  } finally {
+    isCreatingRoom = false;
+    setCreateButtonsDisabled(false);
   }
-
-  appStatus.textContent =
-    "방을 만들지 못했습니다. 잠시 후 다시 시도해 주세요.";
-
-  isCreatingRoom = false;
-  setCreateButtonsDisabled(false);
 }
 
 // ========================================
@@ -859,15 +971,11 @@ async function startPlayerPresence(
   roomCode,
   studentNumber
 ) {
-  // 기존 접속 상태 감시가 있다면
-  // 해제합니다.
   if (stopPlayerPresenceListener) {
     stopPlayerPresenceListener();
     stopPlayerPresenceListener = null;
   }
 
-  // 기존 연결 종료 예약이 있다면
-  // 취소합니다.
   if (playerPresenceDisconnect) {
     try {
       await playerPresenceDisconnect.cancel();
@@ -881,9 +989,6 @@ async function startPlayerPresence(
     playerPresenceDisconnect = null;
   }
 
-  // 같은 페이지에서 다른 방 또는 번호로
-  // 이동한 경우 이전 참가 상태를
-  // 연결 끊김으로 변경합니다.
   if (activePlayerConnectedRef) {
     try {
       await set(
@@ -923,17 +1028,14 @@ async function startPlayerPresence(
         console.log(
           "Firebase 서버와 연결이 끊겼습니다."
         );
+
         return;
       }
 
       try {
         /*
-         * 브라우저가 닫히거나 네트워크 연결이
-         * 끊어지면 Firebase 서버가 connected를
-         * false로 변경합니다.
-         *
-         * true를 기록하기 전에 onDisconnect를
-         * 먼저 예약합니다.
+         * onDisconnect를 먼저 예약한 뒤
+         * connected를 true로 기록합니다.
          */
         const disconnectHandler =
           onDisconnect(
@@ -1007,6 +1109,15 @@ async function classifyJoinWriteFailure(
       return "존재하지 않는 방 코드입니다.";
     }
 
+    const roomMeta =
+      metaSnapshot.val();
+
+    if (roomMeta?.status !== "LOBBY") {
+      return (
+        "이미 시작되었거나 참가할 수 없는 방입니다."
+      );
+    }
+
     const playerSnapshot = await get(
       ref(
         db,
@@ -1050,7 +1161,10 @@ async function classifyJoinWriteFailure(
 // ========================================
 
 async function joinRoom() {
-  if (isJoiningRoom) {
+  if (
+    isJoiningRoom ||
+    isMovingToGamePage
+  ) {
     return;
   }
 
@@ -1080,7 +1194,7 @@ async function joinRoom() {
     !ROOM_CODE_PATTERN.test(roomCode)
   ) {
     joinStatus.textContent =
-      "방 코드는 영문과 숫자로 된 4자리입니다.";
+      "방 코드는 지정된 영문과 숫자로 된 4자리입니다.";
     return;
   }
 
@@ -1090,13 +1204,12 @@ async function joinRoom() {
     )
   ) {
     joinStatus.textContent =
-      "학생번호는 01부터 40까지 입력해 주세요.";
+      "학생번호는 01부터 30까지 입력해 주세요.";
     return;
   }
 
   isJoiningRoom = true;
   joinRoomBtn.disabled = true;
-
   joinedRoomResult.hidden = true;
 
   joinStatus.textContent =
@@ -1175,12 +1288,13 @@ async function joinRoom() {
       ) {
         joinStatus.textContent =
           `${studentNumber}번은 다른 사용자가 이미 사용 중입니다.`;
+
         return;
       }
 
       /*
-       * 같은 UID의 재접속입니다.
-       * 최초 참가 시각은 변경하지 않습니다.
+       * 같은 UID의 재접속이면 기존 최초
+       * 참가 시각을 유지합니다.
        */
       if (
         typeof existingPlayer.joinedAt ===
@@ -1198,14 +1312,6 @@ async function joinRoom() {
       connected: true
     };
 
-    /*
-     * 루트 경로 다중 update를 사용하지 않고
-     * 해당 참가자 경로에만 set합니다.
-     *
-     * 동시 참가가 발생하더라도 Rules에서
-     * 기존 UID와 새 UID를 비교하여 다른 UID의
-     * 덮어쓰기를 거부합니다.
-     */
     await set(
       playerRef,
       playerData
@@ -1216,7 +1322,10 @@ async function joinRoom() {
       studentNumber
     );
 
-    watchJoinedRoomStatus(roomCode);
+    watchJoinedRoomStatus(
+      roomCode,
+      studentNumber
+    );
 
     showJoinedRoom(
       roomCode,
@@ -1255,7 +1364,8 @@ async function joinRoom() {
     isJoiningRoom = false;
 
     joinRoomBtn.disabled =
-      currentUser === null;
+      currentUser === null ||
+      isMovingToGamePage;
   }
 }
 
