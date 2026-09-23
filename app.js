@@ -6,7 +6,8 @@ import {
   get,
   onValue,
   onDisconnect,
-  serverTimestamp
+  serverTimestamp,
+  runTransaction
 } from "./js/firebase.js";
 
 // ========================================
@@ -114,14 +115,6 @@ let stopHostRoomStatusListener = null;
 
 let stopJoinedRoomStatusListener = null;
 
-let stopPlayerPresenceListener = null;
-let playerPresenceDisconnect = null;
-let activePlayerConnectedRef = null;
-
-// 현재 감시 중인 대기실의 구독 해제 함수
-let stopHostLobbyListener = null;
-
-// 학생 접속 상태 감시 및 연결 종료 예약
 let stopPlayerPresenceListener = null;
 let playerPresenceDisconnect = null;
 let activePlayerConnectedRef = null;
@@ -1218,7 +1211,7 @@ async function joinRoom() {
       playerData
     );
 
-        await startPlayerPresence(
+    await startPlayerPresence(
       roomCode,
       studentNumber
     );
