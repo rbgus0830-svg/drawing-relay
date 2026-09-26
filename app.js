@@ -4,7 +4,7 @@ import {
   ref,
   set,
   get,
-  runTransaction,
+  update,
   onValue,
   onDisconnect,
   serverTimestamp
@@ -105,6 +105,10 @@ let isStartingGame = false;
 let currentHostRoomCode = null;
 let stopRoomStatusListener = null;
 let stopPlayerStatusListener = null;
+let currentHostRoomStatus = null;
+let currentHostPlayerCount = 0;
+let currentHostMaxPlayers = 0;
+let playerPresenceSession = 0;
 
 // 현재 감시 중인 대기실의 구독 해제 함수
 let stopHostLobbyListener = null;
@@ -227,15 +231,17 @@ function watchRoomStatus(roomCode, role) {
     const status = snapshot.val();
     if (status === "PLAYING") {
       if (role === "host") {
+        currentHostRoomStatus = status;
         startGameBtn.disabled = true;
-        hostLobbyStatus.textContent = "게임이 시작되었습니다.";
+        renderHostLobbyStatus();
       } else {
         joinStatus.textContent = "게임이 시작되었습니다.";
       }
     } else if (status === "LOBBY") {
       if (role === "host") {
+        currentHostRoomStatus = status;
         startGameBtn.disabled = false;
-        hostLobbyStatus.textContent = "학생의 참가를 기다리고 있습니다.";
+        renderHostLobbyStatus();
       }
     } else {
       const message = "방 상태를 확인할 수 없습니다.";
@@ -252,24 +258,58 @@ function watchRoomStatus(roomCode, role) {
   return listener;
 }
 
+function renderHostLobbyStatus() {
+  if (currentHostRoomStatus === "PLAYING") {
+    hostLobbyStatus.textContent = "게임이 시작되었습니다.";
+    return;
+  }
+  if (currentHostPlayerCount === 0) {
+    hostLobbyStatus.textContent = "학생의 참가를 기다리고 있습니다.";
+  } else if (currentHostPlayerCount >= currentHostMaxPlayers) {
+    hostLobbyStatus.textContent = "참가 인원이 모두 찼습니다.";
+  } else {
+    hostLobbyStatus.textContent = `${currentHostPlayerCount}명이 참가했습니다.`;
+  }
+}
+
 async function startGame() {
   if (!currentUser || !currentHostRoomCode || isStartingGame) return;
   isStartingGame = true;
   startGameBtn.disabled = true;
   hostLobbyStatus.textContent = "게임을 시작하는 중입니다...";
   try {
-    const result = await runTransaction(
-      ref(db, `rooms/${currentHostRoomCode}/meta`),
-      (meta) => {
-        if (!meta || meta.status !== "LOBBY" || meta.hostUid !== currentUser.uid) return;
-        return { ...meta, status: "PLAYING" };
-      }
-    );
-    if (!result.committed) {
+    const roomSnapshot = await get(ref(db, `rooms/${currentHostRoomCode}`));
+    const room = roomSnapshot.val();
+    if (!room?.meta || room.hostUid !== currentUser.uid || room.meta.status !== "LOBBY") {
       hostLobbyStatus.textContent = "이미 시작되었거나 시작할 수 없는 방입니다.";
       return;
     }
-    await set(ref(db, `rooms/${currentHostRoomCode}/meta/startedAt`), serverTimestamp());
+
+    const connectedPlayers = Object.values(room.players ?? {})
+      .filter((player) => player?.connected === true && typeof player.number === "string")
+      .sort((first, second) => first.number.localeCompare(second.number));
+    const maxPlayers = Number(room.meta.maxPlayers);
+    if (connectedPlayers.length < 2) {
+      hostLobbyStatus.textContent = "게임 시작에는 연결된 참가자가 2명 이상 필요합니다.";
+      return;
+    }
+    const players = connectedPlayers.slice(0, maxPlayers);
+    const serverTimeOffsetSnapshot = await get(ref(db, ".info/serverTimeOffset"));
+    const now = Date.now() + Number(serverTimeOffsetSnapshot.val() ?? 0);
+    const order = Object.fromEntries(players.map((player, index) => [index, player.number]));
+    const updates = {
+      [`rooms/${currentHostRoomCode}/meta/status`]: "PLAYING",
+      [`rooms/${currentHostRoomCode}/game`]: {
+        phase: "DRAWING",
+        currentStep: 1,
+        startedAt: now,
+        stepStartedAt: now,
+        stepEndsAt: now + Number(room.meta.stepDurationMs),
+        playerCount: players.length,
+        order
+      }
+    };
+    await update(ref(db), updates);
   } catch (error) {
     hostLobbyStatus.textContent = isPermissionDeniedError(error)
       ? "게임 시작 권한이 없습니다."
@@ -337,6 +377,7 @@ function watchHostLobby(
 
   hostLobby.hidden = false;
   currentHostRoomCode = roomCode;
+  currentHostMaxPlayers = maxPlayers;
   stopRoomStatusListener?.();
   stopRoomStatusListener = watchRoomStatus(roomCode, "host");
   playerList.replaceChildren();
@@ -397,19 +438,8 @@ function watchHostLobby(
 
       playerCount.textContent =
         `${players.length} / ${maxPlayers}`;
-
-      if (players.length === 0) {
-        hostLobbyStatus.textContent =
-          "학생의 참가를 기다리고 있습니다.";
-      } else if (
-        players.length >= maxPlayers
-      ) {
-        hostLobbyStatus.textContent =
-          "참가 인원이 모두 찼습니다.";
-      } else {
-        hostLobbyStatus.textContent =
-          `${players.length}명이 참가했습니다.`;
-      }
+      currentHostPlayerCount = players.length;
+      renderHostLobbyStatus();
 
       console.log(
         "대기실 참가자 갱신:",
@@ -481,11 +511,7 @@ async function createRoom(roomType) {
     };
 
     try {
-      const result = await runTransaction(
-        ref(db, `rooms/${roomCode}`),
-        (room) => room === null ? roomData : undefined
-      );
-      if (!result.committed) continue;
+      await set(ref(db, `rooms/${roomCode}`), roomData);
 
       showCreatedRoom(roomCode);
 
@@ -540,6 +566,7 @@ async function startPlayerPresence(
   roomCode,
   studentNumber
 ) {
+  const session = ++playerPresenceSession;
   // 기존 접속 상태 감시가 있다면
   // 해제합니다.
   if (stopPlayerPresenceListener) {
@@ -608,6 +635,7 @@ async function startPlayerPresence(
       }
 
       try {
+        if (session !== playerPresenceSession) return;
         /*
          * 브라우저가 닫히거나 네트워크 연결이
          * 끊어지면 Firebase 서버가 connected를
@@ -622,6 +650,8 @@ async function startPlayerPresence(
           );
 
         await disconnectHandler.set(false);
+
+        if (session !== playerPresenceSession) return;
 
         playerPresenceDisconnect =
           disconnectHandler;
