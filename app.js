@@ -4,6 +4,7 @@ import {
   ref,
   set,
   get,
+  runTransaction,
   onValue,
   onDisconnect,
   serverTimestamp
@@ -43,6 +44,9 @@ const playerCount =
 
 const hostLobbyStatus =
   document.getElementById("hostLobbyStatus");
+
+const startGameBtn =
+  document.getElementById("startGameBtn");
 
 const playerList =
   document.getElementById("playerList");
@@ -97,6 +101,10 @@ const MAX_CREATE_ATTEMPTS = 5;
 let currentUser = null;
 let isCreatingRoom = false;
 let isJoiningRoom = false;
+let isStartingGame = false;
+let currentHostRoomCode = null;
+let stopRoomStatusListener = null;
+let stopPlayerStatusListener = null;
 
 // 현재 감시 중인 대기실의 구독 해제 함수
 let stopHostLobbyListener = null;
@@ -213,6 +221,64 @@ function showJoinedRoom(
   joinedRoomResult.hidden = false;
 }
 
+function watchRoomStatus(roomCode, role) {
+  const statusRef = ref(db, `rooms/${roomCode}/meta/status`);
+  const listener = onValue(statusRef, (snapshot) => {
+    const status = snapshot.val();
+    if (status === "PLAYING") {
+      if (role === "host") {
+        startGameBtn.disabled = true;
+        hostLobbyStatus.textContent = "게임이 시작되었습니다.";
+      } else {
+        joinStatus.textContent = "게임이 시작되었습니다.";
+      }
+    } else if (status === "LOBBY") {
+      if (role === "host") {
+        startGameBtn.disabled = false;
+        hostLobbyStatus.textContent = "학생의 참가를 기다리고 있습니다.";
+      }
+    } else {
+      const message = "방 상태를 확인할 수 없습니다.";
+      if (role === "host") hostLobbyStatus.textContent = message;
+      else joinStatus.textContent = message;
+    }
+  }, (error) => {
+    const message = isPermissionDeniedError(error)
+      ? "방 상태를 읽을 권한이 없습니다."
+      : "방 상태를 불러오지 못했습니다.";
+    if (role === "host") hostLobbyStatus.textContent = message;
+    else joinStatus.textContent = message;
+  });
+  return listener;
+}
+
+async function startGame() {
+  if (!currentUser || !currentHostRoomCode || isStartingGame) return;
+  isStartingGame = true;
+  startGameBtn.disabled = true;
+  hostLobbyStatus.textContent = "게임을 시작하는 중입니다...";
+  try {
+    const result = await runTransaction(
+      ref(db, `rooms/${currentHostRoomCode}/meta`),
+      (meta) => {
+        if (!meta || meta.status !== "LOBBY" || meta.hostUid !== currentUser.uid) return;
+        return { ...meta, status: "PLAYING" };
+      }
+    );
+    if (!result.committed) {
+      hostLobbyStatus.textContent = "이미 시작되었거나 시작할 수 없는 방입니다.";
+      return;
+    }
+    await set(ref(db, `rooms/${currentHostRoomCode}/meta/startedAt`), serverTimestamp());
+  } catch (error) {
+    hostLobbyStatus.textContent = isPermissionDeniedError(error)
+      ? "게임 시작 권한이 없습니다."
+      : "게임을 시작하지 못했습니다.";
+  } finally {
+    isStartingGame = false;
+  }
+}
+
 function isPermissionDeniedError(error) {
   const errorCode =
     String(error?.code ?? "")
@@ -270,6 +336,9 @@ function watchHostLobby(
   }
 
   hostLobby.hidden = false;
+  currentHostRoomCode = roomCode;
+  stopRoomStatusListener?.();
+  stopRoomStatusListener = watchRoomStatus(roomCode, "host");
   playerList.replaceChildren();
 
   playerCount.textContent =
@@ -412,13 +481,11 @@ async function createRoom(roomType) {
     };
 
     try {
-      await set(
-        ref(
-          db,
-          `rooms/${roomCode}`
-        ),
-        roomData
+      const result = await runTransaction(
+        ref(db, `rooms/${roomCode}`),
+        (room) => room === null ? roomData : undefined
       );
+      if (!result.committed) continue;
 
       showCreatedRoom(roomCode);
 
@@ -836,6 +903,9 @@ async function joinRoom() {
       roomMeta.type
     );
 
+    stopPlayerStatusListener?.();
+    stopPlayerStatusListener = watchRoomStatus(roomCode, "player");
+
     joinStatus.textContent =
       playerSnapshot.exists()
         ? "기존 참가 정보로 다시 연결되었습니다."
@@ -935,6 +1005,8 @@ groupGameBtn.addEventListener(
     createRoom("group");
   }
 );
+
+startGameBtn.addEventListener("click", startGame);
 
 joinRoomBtn.addEventListener(
   "click",
