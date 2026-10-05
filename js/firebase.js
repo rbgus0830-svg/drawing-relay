@@ -4,7 +4,8 @@ import {
 
 import {
   getAuth,
-  signInAnonymously
+  signInAnonymously,
+  connectAuthEmulator
 } from "https://www.gstatic.com/firebasejs/12.2.1/firebase-auth.js";
 
 import {
@@ -41,8 +42,10 @@ if (
   location.hostname === "localhost" ||
   location.hostname === "127.0.0.1"
 ) {
+  connectAuthEmulator(auth, "http://127.0.0.1:9099");
   connectDatabaseEmulator(database, "127.0.0.1", 9000);
-  console.info("[Firebase] Realtime Database Emulator에 연결됨");
+
+  console.info("[Firebase] Auth 및 Database Emulator에 연결됨");
 }
 
 export const db = database;
