@@ -2,175 +2,254 @@
 <html lang="ko">
 <head>
   <meta charset="UTF-8">
-
   <meta
     name="viewport"
     content="width=device-width, initial-scale=1.0"
   >
-
   <title>그림 릴레이</title>
-
-  <link
-    rel="stylesheet"
-    href="style.css"
-  >
+  <link rel="stylesheet" href="style.css">
 </head>
-
 <body>
   <main class="home">
-    <h1>그림 릴레이</h1>
+    <header class="page-header">
+      <h1>그림 릴레이</h1>
+      <p>친구들과 이어 그리는 그림 게임</p>
+    </header>
 
-    <p>
-      친구들과 이어 그리는 그림 게임
-    </p>
+    <!-- 기존 홈·대기실 화면 -->
+    <div id="lobbyScreens" class="lobby-screens">
+      <section class="panel">
+        <h2>게임방 만들기</h2>
 
-    <!-- 게임방 생성 메뉴 -->
-    <div class="menu">
-      <button
-        id="classGameBtn"
-        type="button"
-        disabled
-      >
-        학급 게임
-      </button>
+        <div class="menu">
+          <button id="classGameBtn" type="button" disabled>
+            학급 게임
+          </button>
+          <button id="groupGameBtn" type="button" disabled>
+            모둠 게임
+          </button>
+        </div>
 
-      <button
-        id="groupGameBtn"
-        type="button"
-        disabled
-      >
-        모둠 게임
-      </button>
+        <p id="appStatus" role="status">
+          Firebase에 연결하는 중입니다...
+        </p>
+      </section>
+
+      <section id="roomResult" class="panel" hidden>
+        <h2>방이 만들어졌습니다</h2>
+        <p>
+          방 코드:
+          <strong id="roomCode"></strong>
+        </p>
+        <p>
+          초대 주소:
+          <a id="roomLink" href=""></a>
+        </p>
+      </section>
+
+      <section id="hostLobby" class="panel" hidden>
+        <h2>방장 대기실</h2>
+        <p>
+          참가 인원:
+          <strong id="playerCount">0 / 0</strong>
+        </p>
+        <p id="hostLobbyStatus" role="status">
+          학생의 참가를 기다리고 있습니다.
+        </p>
+        <button id="startGameBtn" type="button" disabled>
+          게임 시작
+        </button>
+        <ul id="playerList"></ul>
+      </section>
+
+      <section id="joinRoomSection" class="panel">
+        <h2>게임방 참가</h2>
+
+        <div class="join-fields">
+          <div class="field">
+            <label for="joinRoomCode">방 코드</label>
+            <input
+              id="joinRoomCode"
+              type="text"
+              maxlength="4"
+              autocomplete="off"
+              autocapitalize="characters"
+              spellcheck="false"
+              placeholder="예: EBXT"
+            >
+          </div>
+
+          <div class="field">
+            <label for="studentNumber">학생번호</label>
+            <input
+              id="studentNumber"
+              type="text"
+              inputmode="numeric"
+              maxlength="2"
+              autocomplete="off"
+              placeholder="예: 01"
+            >
+          </div>
+        </div>
+
+        <button id="joinRoomBtn" type="button" disabled>
+          방 참가하기
+        </button>
+        <p id="joinStatus" role="status"></p>
+      </section>
+
+      <section id="joinedRoomResult" class="panel" hidden>
+        <h2>참가 완료</h2>
+        <p>
+          방 코드:
+          <strong id="joinedRoomCode"></strong>
+        </p>
+        <p>
+          학생번호:
+          <strong id="joinedStudentNumber"></strong>
+        </p>
+        <p id="joinedRoomType"></p>
+      </section>
     </div>
 
-    <!-- Firebase 연결 및 방 생성 상태 -->
-    <p
-      id="appStatus"
-      role="status"
-    >
-      Firebase에 연결하는 중입니다...
-    </p>
+    <!-- 방장 진행 화면 -->
+    <section id="hostGameScreen" class="panel game-screen" hidden>
+      <div class="game-heading">
+        <div>
+          <h2>방장 진행 화면</h2>
+          <p>
+            방 코드:
+            <strong id="hostGameRoomCode"></strong>
+          </p>
+        </div>
 
-    <!-- 방 생성 결과 -->
-    <section
-      id="roomResult"
-      hidden
-    >
-      <h2>방이 만들어졌습니다</h2>
-
-      <p>
-        방 코드:
-        <strong id="roomCode"></strong>
-      </p>
-
-      <p>
-        초대 주소:
-        <a
-          id="roomLink"
-          href=""
-        ></a>
-      </p>
-    </section>
-
-    <!-- 방장 전용 실시간 대기실 -->
-    <section
-      id="hostLobby"
-      hidden
-    >
-      <h2>방장 대기실</h2>
-
-      <p>
-        참가 인원:
-        <strong id="playerCount">
-          0 / 0
-        </strong>
-      </p>
-
-      <p
-        id="hostLobbyStatus"
-        role="status"
-      >
-        학생의 참가를 기다리고 있습니다.
-      </p>
-
-      <button id="startGameBtn" type="button" disabled>게임 시작</button>
-
-      <ul id="playerList"></ul>
-    </section>
-
-    <hr>
-
-    <!-- 학생용 방 참가 화면 -->
-    <section id="joinRoomSection">
-      <h2>게임방 참가</h2>
-
-      <div>
-        <label for="joinRoomCode">
-          방 코드
-        </label>
-
-        <input
-          id="joinRoomCode"
-          type="text"
-          maxlength="4"
-          autocomplete="off"
-          placeholder="예: EBXT"
-        >
+        <div class="timer-box">
+          <span>남은 시간</span>
+          <strong id="hostGameTimer">--:--</strong>
+        </div>
       </div>
 
-      <div>
-        <label for="studentNumber">
-          학생번호
-        </label>
-
-        <input
-          id="studentNumber"
-          type="text"
-          inputmode="numeric"
-          maxlength="2"
-          autocomplete="off"
-          placeholder="예: 01"
-        >
+      <div class="game-summary">
+        <p>
+          현재 단계:
+          <strong id="hostGameStep">-</strong>
+        </p>
+        <p>
+          시작 참가 인원:
+          <strong id="hostGamePlayerCount">-</strong>
+        </p>
+        <p>
+          진행 상태:
+          <strong id="hostGamePhase">-</strong>
+        </p>
       </div>
 
-      <button
-        id="joinRoomBtn"
-        type="button"
-        disabled
-      >
-        방 참가하기
-      </button>
+      <p id="hostGameStatus" class="game-status" role="status">
+        게임 정보를 불러오는 중입니다.
+      </p>
 
-      <p
-        id="joinStatus"
-        role="status"
-      ></p>
+      <p class="help-text">
+        이번 버전은 학생 그림판과 타이머까지 지원합니다.
+        그림 저장과 자동 단계 전환은 아직 지원하지 않습니다.
+      </p>
     </section>
 
-    <!-- 학생 참가 완료 결과 -->
+    <!-- 학생 그림판 화면 -->
     <section
-      id="joinedRoomResult"
+      id="studentGameScreen"
+      class="panel game-screen"
       hidden
     >
-      <h2>참가 완료</h2>
+      <div class="game-heading">
+        <div>
+          <h2>학생 그림판</h2>
+          <p>
+            방 <strong id="studentGameRoomCode"></strong>
+            · <strong id="studentGameNumber"></strong>번
+            · 단계 <strong id="studentGameStep">-</strong>
+          </p>
+        </div>
 
-      <p>
-        방 코드:
-        <strong id="joinedRoomCode"></strong>
+        <div class="timer-box">
+          <span>남은 시간</span>
+          <strong id="studentGameTimer">--:--</strong>
+        </div>
+      </div>
+
+      <fieldset id="drawingTools" class="drawing-tools" disabled>
+        <legend>그리기 도구</legend>
+
+        <div class="tool-field">
+          <label for="penColor">색상</label>
+          <input id="penColor" type="color" value="#222222">
+        </div>
+
+        <div class="tool-field pen-width-field">
+          <label for="penWidth">
+            굵기 <output id="penWidthValue">6</output>px
+          </label>
+          <input
+            id="penWidth"
+            type="range"
+            min="1"
+            max="40"
+            value="6"
+          >
+        </div>
+
+        <button
+          id="penToolBtn"
+          type="button"
+          class="tool-button"
+          aria-pressed="true"
+        >
+          펜
+        </button>
+
+        <button
+          id="eraserToolBtn"
+          type="button"
+          class="tool-button"
+          aria-pressed="false"
+        >
+          지우개
+        </button>
+
+        <button
+          id="clearCanvasBtn"
+          type="button"
+          class="secondary-button"
+        >
+          전체 지우기
+        </button>
+      </fieldset>
+
+      <div class="canvas-frame">
+        <canvas
+          id="drawingCanvas"
+          width="1000"
+          height="700"
+          aria-label="마우스, 터치 또는 펜으로 그리는 그림판"
+        >
+          이 브라우저는 캔버스를 지원하지 않습니다.
+        </canvas>
+      </div>
+
+      <p
+        id="studentGameStatus"
+        class="game-status"
+        role="status"
+      >
+        게임 정보를 불러오는 중입니다.
       </p>
 
-      <p>
-        학생번호:
-        <strong id="joinedStudentNumber"></strong>
+      <p class="help-text">
+        그림은 현재 화면에만 유지됩니다.
+        새로고침하거나 페이지를 닫으면 사라집니다.
       </p>
-
-      <p id="joinedRoomType"></p>
     </section>
   </main>
 
-  <script
-    type="module"
-    src="app.js"
-  ></script>
+  <script type="module" src="app.js"></script>
 </body>
 </html>

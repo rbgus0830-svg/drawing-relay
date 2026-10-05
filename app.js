@@ -10,6 +10,10 @@ import {
   serverTimestamp
 } from "./js/firebase.js";
 
+import {
+  watchGameScreen
+} from "./js/game-screen.js";
+
 // ========================================
 // 방 생성 화면
 // ========================================
@@ -692,11 +696,15 @@ async function createRoom(roomType) {
 
     try {
       await set(ref(db, `rooms/${roomCode}`), roomData);
+showCreatedRoom(roomCode);
+watchHostLobby(roomCode, maxPlayers);
 
-      showCreatedRoom(roomCode);
-      watchHostLobby(roomCode, maxPlayers);
+watchGameScreen({
+  roomCode,
+  role: "host"
+});
 
-      appStatus.textContent = "방 생성이 완료되었습니다.";
+appStatus.textContent = "방 생성이 완료되었습니다.";
 
       console.log("방 생성 성공:", roomCode, roomData);
 
@@ -1105,14 +1113,20 @@ async function joinRoom() {
     );
 
     stopPlayerStatusListener?.();
-    stopPlayerStatusListener = watchRoomStatus(
-      roomCode,
-      "player"
-    );
+stopPlayerStatusListener = watchRoomStatus(
+  roomCode,
+  "player"
+);
 
-    joinStatus.textContent = playerSnapshot.exists()
-      ? "기존 참가 정보로 다시 연결되었습니다."
-      : "방 참가가 완료되었습니다.";
+watchGameScreen({
+  roomCode,
+  role: "player",
+  studentNumber
+});
+
+joinStatus.textContent = playerSnapshot.exists()
+  ? "기존 참가 정보로 다시 연결되었습니다."
+  : "방 참가가 완료되었습니다.";
 
     console.log("방 참가 성공:", {
       roomCode,

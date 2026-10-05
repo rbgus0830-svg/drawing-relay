@@ -2,41 +2,347 @@
   box-sizing: border-box;
 }
 
+/* 다른 display 설정보다 hidden이 우선하도록 합니다. */
+[hidden] {
+  display: none !important;
+}
+
+:root {
+  font-family: Arial, "Noto Sans KR", sans-serif;
+  color: #222;
+  background: #f5f7fb;
+}
+
 body {
   margin: 0;
-  font-family: Arial, sans-serif;
-  background: #f5f7fb;
-  color: #222;
 }
 
-.home {
-  min-height: 100vh;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  align-items: center;
-  gap: 20px;
-}
-
-.home h1 {
-  font-size: 48px;
-  margin: 0;
-}
-
-.home p {
-  font-size: 20px;
-  color: #666;
-}
-
-.menu {
-  display: flex;
-  gap: 16px;
+button,
+input {
+  font: inherit;
 }
 
 button {
   border: none;
-  border-radius: 12px;
-  padding: 16px 28px;
-  font-size: 18px;
+  border-radius: 10px;
+  padding: 12px 20px;
+  background: #3459e6;
+  color: #fff;
+  font-size: 16px;
+  font-weight: 700;
   cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  background: #2646c5;
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+button:focus-visible,
+input:focus-visible,
+a:focus-visible {
+  outline: 3px solid #ffb020;
+  outline-offset: 3px;
+}
+
+.home {
+  width: min(1100px, 100%);
+  min-height: 100vh;
+  margin: 0 auto;
+  padding: 32px 20px 48px;
+}
+
+.page-header {
+  margin-bottom: 28px;
+  text-align: center;
+}
+
+.page-header h1 {
+  margin: 0;
+  font-size: clamp(30px, 5vw, 44px);
+}
+
+.page-header p {
+  margin: 12px 0 0;
+  color: #647084;
+}
+
+.lobby-screens {
+  display: grid;
+  gap: 20px;
+  width: min(680px, 100%);
+  margin: 0 auto;
+}
+
+.panel {
+  padding: 24px;
+  border: 1px solid #e0e6ef;
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 4px 18px rgb(28 45 75 / 5%);
+}
+
+.panel h2 {
+  margin: 0 0 16px;
+  font-size: 23px;
+}
+
+.panel p {
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.menu {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.join-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.field,
+.tool-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.field label,
+.tool-field label {
+  font-weight: 700;
+}
+
+.field input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid #cbd3df;
+  border-radius: 8px;
+  padding: 12px;
+}
+
+#roomCode,
+#joinedRoomCode,
+#hostGameRoomCode,
+#studentGameRoomCode {
+  letter-spacing: 2px;
+}
+
+#playerList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 0;
+  list-style: none;
+}
+
+#playerList li {
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: #eef2ff;
+}
+
+.game-screen {
+  width: 100%;
+}
+
+.game-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.game-heading h2 {
+  margin-bottom: 8px;
+}
+
+.game-heading p {
+  margin: 0;
+}
+
+.timer-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  min-width: 130px;
+  padding: 12px 18px;
+  border-radius: 12px;
+  background: #eef2ff;
+}
+
+.timer-box span {
+  font-size: 14px;
+  color: #54627b;
+}
+
+.timer-box strong {
+  font-size: 32px;
+  font-variant-numeric: tabular-nums;
+}
+
+.timer-box.is-warning {
+  background: #fff0ed;
+  color: #b52b19;
+}
+
+.game-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 28px;
+  padding: 12px 16px;
+  border-radius: 10px;
+  background: #f5f7fb;
+}
+
+.game-summary p {
+  margin: 0;
+}
+
+.drawing-tools {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin: 0 0 16px;
+  padding: 14px;
+  border: 1px solid #dfe5ef;
+  border-radius: 10px;
+}
+
+.drawing-tools legend {
+  padding: 0 6px;
+  color: #54627b;
+  font-size: 14px;
+}
+
+.drawing-tools:disabled {
+  opacity: 0.55;
+}
+
+.tool-field {
+  font-size: 14px;
+}
+
+.tool-field input[type="color"] {
+  width: 50px;
+  height: 36px;
+  padding: 2px;
+  border: 1px solid #cbd3df;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.pen-width-field {
+  min-width: 140px;
+}
+
+.pen-width-field input {
+  width: 140px;
+}
+
+.tool-button,
+.secondary-button {
+  padding: 10px 16px;
+  background: #edf1f8;
+  color: #334155;
+}
+
+.tool-button[aria-pressed="true"] {
+  background: #3459e6;
+  color: #fff;
+}
+
+.tool-button:hover:not(:disabled),
+.secondary-button:hover:not(:disabled) {
+  background: #dbe3f0;
+  color: #222;
+}
+
+.tool-button[aria-pressed="true"]:hover:not(:disabled) {
+  background: #2646c5;
+  color: #fff;
+}
+
+.canvas-frame {
+  overflow: hidden;
+  border: 2px solid #d6deeb;
+  border-radius: 10px;
+  background: #fff;
+}
+
+#drawingCanvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  background: #fff;
+
+  /* 캔버스 안에서만 브라우저의 터치 스크롤을 막습니다. */
+  touch-action: none;
+  user-select: none;
+  cursor: crosshair;
+}
+
+#drawingCanvas.is-locked {
+  cursor: not-allowed;
+}
+
+.game-status {
+  min-height: 1.6em;
+  margin: 16px 0 0;
+  font-weight: 700;
+}
+
+.help-text {
+  margin-bottom: 0;
+  color: #647084;
+  font-size: 14px;
+}
+
+@media (max-width: 600px) {
+  .home {
+    padding: 20px 12px 32px;
+  }
+
+  .panel {
+    padding: 16px;
+  }
+
+  .join-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .game-heading {
+    align-items: flex-start;
+  }
+
+  .timer-box {
+    min-width: 108px;
+    padding: 10px 14px;
+  }
+
+  .timer-box strong {
+    font-size: 28px;
+  }
+
+  .drawing-tools {
+    gap: 12px;
+    padding: 10px;
+  }
+
+  .drawing-tools button {
+    font-size: 14px;
+    padding: 10px 12px;
+  }
 }
