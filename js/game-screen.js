@@ -1,7 +1,12 @@
 import {
   db,
   ref,
-  onValue
+  set,
+  get,
+  update,
+  runTransaction,
+  onValue,
+  serverTimestamp
 } from "./firebase.js";
 
 // ========================================
@@ -19,7 +24,8 @@ const hostTimer = document.getElementById("hostGameTimer");
 const hostStatus = document.getElementById("hostGameStatus");
 
 const studentRoomCode = document.getElementById("studentGameRoomCode");
-const studentNumberElement = document.getElementById("studentGameNumber");
+const studentNumberElement =
+  document.getElementById("studentGameNumber");
 const studentStep = document.getElementById("studentGameStep");
 const studentTimer = document.getElementById("studentGameTimer");
 const studentStatus = document.getElementById("studentGameStatus");
@@ -36,8 +42,12 @@ const eraserButton = document.getElementById("eraserToolBtn");
 const clearButton = document.getElementById("clearCanvasBtn");
 
 // ========================================
-// モジュール 상태
+// 설정 및 상태
 // ========================================
+const MAX_IMAGE_DATA_URL_LENGTH = 2000000;
+const RETRY_INTERVAL_MS = 3000;
+const IMAGE_LOAD_TIMEOUT_MS = 15000;
+
 let session = null;
 let cleanups = [];
 let timerId = null;
@@ -51,6 +61,8 @@ let canvasStepKey = null;
 // 공통 화면 처리
 // ========================================
 function setText(element, value) {
+  if (!element) return;
+
   const text = String(value);
   if (element.textContent !== text) {
     element.textContent = text;
@@ -58,51 +70,36 @@ function setText(element, value) {
 }
 
 function setStatus(message) {
-  if (!session) {
-    return;
-  }
+  if (!session) return;
 
-  const target = session.role === "host"
-    ? hostStatus
-    : studentStatus;
-
-  setText(target, message);
+  setText(
+    session.role === "host" ? hostStatus : studentStatus,
+    message
+  );
 }
 
 function setDrawingEnabled(enabled) {
   tools.disabled = !enabled;
   canvas.classList.toggle("is-locked", !enabled);
 
-  if (!enabled) {
-    finishStroke();
-  }
+  if (!enabled) finishStroke();
 }
 
 function formatTime(milliseconds) {
-  const totalSeconds = Math.max(
-    0,
-    Math.ceil(milliseconds / 1000)
-  );
+  const seconds = Math.max(0, Math.ceil(milliseconds / 1000));
+  const minutesText = String(Math.floor(seconds / 60))
+    .padStart(2, "0");
+  const secondsText = String(seconds % 60).padStart(2, "0");
 
-  const minutes = String(
-    Math.floor(totalSeconds / 60)
-  ).padStart(2, "0");
-
-  const seconds = String(
-    totalSeconds % 60
-  ).padStart(2, "0");
-
-  return `${minutes}:${seconds}`;
+  return `${minutesText}:${secondsText}`;
 }
 
 function showTimer(milliseconds) {
   const ready = Number.isFinite(milliseconds);
   const text = ready ? formatTime(milliseconds) : "--:--";
 
-  setText(hostTimer, text);
-  setText(studentTimer, text);
-
   for (const timer of [hostTimer, studentTimer]) {
+    setText(timer, text);
     timer.parentElement.classList.toggle(
       "is-warning",
       ready && milliseconds <= 10000
@@ -110,60 +107,73 @@ function showTimer(milliseconds) {
   }
 }
 
+function serverNow(currentSession = session) {
+  if (!Number.isFinite(currentSession?.offset)) return null;
+  return Date.now() + currentSession.offset;
+}
+
 function remainingTime() {
+  const now = serverNow();
+
   if (
-    !session ||
-    !Number.isFinite(session.offset) ||
-    !Number.isFinite(session.game?.stepEndsAt)
+    now === null ||
+    !Number.isFinite(session?.game?.stepEndsAt)
   ) {
     return null;
   }
 
-  return Math.max(
-    0,
-    session.game.stepEndsAt - (Date.now() + session.offset)
-  );
+  return Math.max(0, session.game.stepEndsAt - now);
+}
+
+function getCanvasStepKey(currentSession, game) {
+  return [
+    currentSession.roomCode,
+    currentSession.studentNumber,
+    game.currentStep,
+    game.stepStartedAt
+  ].join(":");
+}
+
+function getHostStepKey(game) {
+  return `${game.currentStep}:${game.stepStartedAt}`;
 }
 
 // ========================================
-// ゲーム 데이터 검증
+// ゲームデータ検証
 // ========================================
 function getValidatedGame() {
   const meta = session?.meta;
   const game = session?.game;
 
-  if (!meta || !game || typeof game !== "object") {
-    return null;
-  }
+  if (!meta || !game || typeof game !== "object") return null;
 
   if (
     !Number.isInteger(meta.relaySteps) ||
     meta.relaySteps < 1 ||
+    meta.relaySteps > 20 ||
+    !Number.isInteger(meta.stepDurationMs) ||
+    meta.stepDurationMs < 1000 ||
     !Number.isInteger(game.currentStep) ||
     game.currentStep < 1 ||
     game.currentStep > meta.relaySteps ||
-    typeof game.phase !== "string" ||
+    !["DRAWING", "FINISHED"].includes(game.phase) ||
     !Number.isInteger(game.playerCount) ||
     game.playerCount < 2 ||
+    game.playerCount > meta.maxPlayers ||
     !Number.isFinite(game.stepStartedAt) ||
     !Number.isFinite(game.stepEndsAt) ||
-    game.stepEndsAt <= game.stepStartedAt ||
+    game.stepEndsAt !==
+      game.stepStartedAt + meta.stepDurationMs ||
     !game.order ||
     typeof game.order !== "object"
   ) {
     return null;
   }
 
-  // Firebase는 숫자 키 목록을 배열 또는 객체로 반환할 수 있습니다.
   const entries = Object.entries(game.order);
+  if (entries.length !== game.playerCount) return null;
 
-  if (entries.length !== game.playerCount) {
-    return null;
-  }
-
-  entries.sort((first, second) => {
-    return Number(first[0]) - Number(second[0]);
-  });
+  entries.sort((a, b) => Number(a[0]) - Number(b[0]));
 
   const order = [];
 
@@ -173,7 +183,7 @@ function getValidatedGame() {
     if (
       key !== String(index) ||
       typeof number !== "string" ||
-      !/^\d{2}$/.test(number)
+      !/^(0[1-9]|[12][0-9]|30)$/.test(number)
     ) {
       return null;
     }
@@ -181,11 +191,21 @@ function getValidatedGame() {
     order.push(number);
   }
 
-  if (new Set(order).size !== order.length) {
-    return null;
-  }
+  if (new Set(order).size !== order.length) return null;
 
   return { game, order };
+}
+
+function validSubmission(value, orderIndex) {
+  return Boolean(
+    value &&
+    typeof value === "object" &&
+    value.orderIndex === orderIndex &&
+    Number.isFinite(value.submittedAt) &&
+    typeof value.image === "string" &&
+    value.image.startsWith("data:image/png;base64,") &&
+    value.image.length <= MAX_IMAGE_DATA_URL_LENGTH
+  );
 }
 
 function canDrawNow() {
@@ -203,47 +223,591 @@ function canDrawNow() {
   const validated = getValidatedGame();
   const remaining = remainingTime();
 
+  if (!validated) return false;
+
+  const stepKey = getCanvasStepKey(session, validated.game);
+
   return Boolean(
-    validated &&
     validated.game.phase === "DRAWING" &&
     validated.order.includes(session.studentNumber) &&
+    canvasStepKey === stepKey &&
+    session.preparation?.key === stepKey &&
+    session.preparation.ready &&
+    session.submission?.key !== stepKey &&
     remaining !== null &&
     remaining > 0
   );
 }
 
 // ========================================
-// ゲーム 화면 렌더링
+// 前段階の画像読み込み・提出済み画像の復元
 // ========================================
-function render() {
-  if (!session) {
+function loadImage(dataUrl) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+
+    const timeoutId = setTimeout(() => {
+      image.onload = null;
+      image.onerror = null;
+      reject(new Error("画像読み込みがタイムアウトしました。"));
+    }, IMAGE_LOAD_TIMEOUT_MS);
+
+    image.onload = () => {
+      clearTimeout(timeoutId);
+      image.onload = null;
+      image.onerror = null;
+      resolve(image);
+    };
+
+    image.onerror = () => {
+      clearTimeout(timeoutId);
+      image.onload = null;
+      image.onerror = null;
+      reject(new Error("画像を読み込めませんでした。"));
+    };
+
+    image.src = dataUrl;
+  });
+}
+
+async function prepareCanvas(currentSession, validated) {
+  const { game, order } = validated;
+  const key = getCanvasStepKey(currentSession, game);
+
+  let preparation = currentSession.preparation;
+
+  if (!preparation || preparation.key !== key) {
+    finishStroke();
+    setDrawingEnabled(false);
+
+    canvasStepKey = null;
+    currentSession.submission = null;
+    clearCanvas();
+
+    preparation = {
+      key,
+      ready: false,
+      loading: false,
+      error: null,
+      nextRetryAt: 0
+    };
+
+    currentSession.preparation = preparation;
+  }
+
+  if (
+    preparation.ready ||
+    preparation.loading ||
+    Date.now() < preparation.nextRetryAt
+  ) {
     return;
   }
 
-  const status = session.meta?.status;
+  preparation.loading = true;
+  preparation.error = null;
+
+  function stillCurrent() {
+    return (
+      session === currentSession &&
+      currentSession.meta?.status === "PLAYING" &&
+      currentSession.game?.phase === "DRAWING" &&
+      currentSession.preparation === preparation &&
+      getCanvasStepKey(currentSession, currentSession.game) === key
+    );
+  }
+
+  try {
+    const myIndex = order.indexOf(currentSession.studentNumber);
+
+    if (myIndex < 0) {
+      throw new Error("참가자 순서에 없는 학생입니다.");
+    }
+
+    // 새로고침 전에 이미 제출했다면 같은 그림을 복원합니다.
+    const ownSnapshot = await get(
+      ref(
+        db,
+        `rooms/${currentSession.roomCode}/submissions/` +
+        `${game.currentStep}/${currentSession.studentNumber}`
+      )
+    );
+
+    if (!stillCurrent()) return;
+
+    const ownSubmission = ownSnapshot.val();
+    let imageUrl = null;
+
+    if (ownSnapshot.exists()) {
+      if (!validSubmission(ownSubmission, myIndex)) {
+        throw new Error("기존 제출 데이터가 올바르지 않습니다.");
+      }
+
+      imageUrl = ownSubmission.image;
+    } else if (game.currentStep > 1) {
+      // 순서가 01 → 03 → 05이면 03은 01의 그림을 받습니다.
+      const previousIndex =
+        (myIndex - 1 + order.length) % order.length;
+      const previousNumber = order[previousIndex];
+
+      // 학생은 단계 전체가 아닌 개별 제출 경로를 읽어야 합니다.
+      const previousSnapshot = await get(
+        ref(
+          db,
+          `rooms/${currentSession.roomCode}/submissions/` +
+          `${game.currentStep - 1}/${previousNumber}`
+        )
+      );
+
+      if (!stillCurrent()) return;
+
+      const previousSubmission = previousSnapshot.val();
+
+      if (!validSubmission(previousSubmission, previousIndex)) {
+        throw new Error("전달받을 그림이 없거나 올바르지 않습니다.");
+      }
+
+      imageUrl = previousSubmission.image;
+    }
+
+    const image = imageUrl ? await loadImage(imageUrl) : null;
+
+    if (!stillCurrent()) return;
+
+    clearCanvas();
+
+    if (image) {
+      context.save();
+      context.globalCompositeOperation = "source-over";
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      context.restore();
+    }
+
+    if (ownSnapshot.exists()) {
+      currentSession.submission = {
+        key,
+        step: game.currentStep,
+        orderIndex: myIndex,
+        image: ownSubmission.image,
+        saved: true,
+        saving: false,
+        error: null,
+        nextRetryAt: 0,
+        fatal: false
+      };
+    }
+
+    canvasStepKey = key;
+    preparation.ready = true;
+    preparation.error = null;
+  } catch (error) {
+    if (!stillCurrent()) return;
+
+    console.error("그림 준비 실패:", error);
+
+    preparation.error =
+      "그림을 불러오지 못했습니다. 연결·읽기 규칙을 확인해 주세요. " +
+      "3초 간격으로 재시도합니다.";
+
+    preparation.nextRetryAt = Date.now() + RETRY_INTERVAL_MS;
+  } finally {
+    preparation.loading = false;
+
+    if (stillCurrent()) render();
+  }
+}
+
+// ========================================
+// 時間終了後の自動提出
+// ========================================
+function getSubmissionMessage() {
+  const submission = session?.submission;
+
+  if (!submission) {
+    return "시간이 종료되었습니다. 그림 저장을 준비하고 있습니다.";
+  }
+
+  if (submission.saved) {
+    return "그림이 저장되었습니다. 다른 참가자의 제출을 기다리고 있습니다.";
+  }
+
+  if (submission.saving) {
+    return "시간이 종료되었습니다. 그림을 저장하는 중입니다.";
+  }
+
+  return submission.error ||
+    "시간이 종료되었습니다. 그림 저장을 준비하고 있습니다.";
+}
+
+async function submitExpiredDrawing() {
+  const currentSession = session;
+
+  if (
+    !currentSession ||
+    currentSession.role !== "player" ||
+    !context ||
+    currentSession.meta?.status !== "PLAYING" ||
+    currentSession.connected !== true ||
+    Object.values(currentSession.errors).some(Boolean)
+  ) {
+    return;
+  }
+
+  const validated = getValidatedGame();
+  const remaining = remainingTime();
+
+  if (
+    !validated ||
+    validated.game.phase !== "DRAWING" ||
+    remaining === null
+  ) {
+    return;
+  }
+
+  const { game, order } = validated;
+  const orderIndex = order.indexOf(currentSession.studentNumber);
+  const key = getCanvasStepKey(currentSession, game);
+
+  if (
+    orderIndex < 0 ||
+    canvasStepKey !== key ||
+    !currentSession.preparation?.ready
+  ) {
+    return;
+  }
+
+  let submission = currentSession.submission;
+
+  if (!submission || submission.key !== key) {
+    if (remaining > 0) return;
+
+    finishStroke();
+
+    submission = {
+      key,
+      step: game.currentStep,
+      orderIndex,
+      image: null,
+      saved: false,
+      saving: false,
+      error: null,
+      nextRetryAt: 0,
+      fatal: false
+    };
+
+    currentSession.submission = submission;
+
+    try {
+      // 재시도 시에도 처음 추출한 이미지를 그대로 보냅니다.
+      submission.image = canvas.toDataURL("image/png");
+
+      if (
+        !submission.image.startsWith("data:image/png;base64,") ||
+        submission.image.length > MAX_IMAGE_DATA_URL_LENGTH
+      ) {
+        throw new Error("이미지가 PNG 형식 또는 크기 제한을 충족하지 않습니다.");
+      }
+    } catch (error) {
+      console.error("이미지 생성 실패:", error);
+      submission.fatal = true;
+      submission.error =
+        "그림을 저장할 수 없습니다. 이미지 크기 제한 또는 콘솔 오류를 확인해 주세요.";
+      return;
+    }
+  }
+
+  if (
+    submission.saved ||
+    submission.saving ||
+    submission.fatal ||
+    Date.now() < submission.nextRetryAt
+  ) {
+    return;
+  }
+
+  submission.saving = true;
+  submission.error = null;
+
+  function stillCurrent() {
+    return (
+      session === currentSession &&
+      currentSession.submission === submission &&
+      canvasStepKey === submission.key
+    );
+  }
+
+  try {
+    await set(
+      ref(
+        db,
+        `rooms/${currentSession.roomCode}/submissions/` +
+        `${submission.step}/${currentSession.studentNumber}`
+      ),
+      {
+        image: submission.image,
+        orderIndex: submission.orderIndex,
+        submittedAt: serverTimestamp()
+      }
+    );
+
+    if (!stillCurrent()) return;
+
+    submission.saved = true;
+    submission.error = null;
+  } catch (error) {
+    if (!stillCurrent()) return;
+
+    console.error("그림 저장 실패:", error);
+
+    submission.error =
+      "그림 저장에 실패했습니다. 연결·규칙을 확인해 주세요. " +
+      "3초 간격으로 재시도합니다.";
+
+    submission.nextRetryAt = Date.now() + RETRY_INTERVAL_MS;
+  } finally {
+    submission.saving = false;
+
+    if (stillCurrent()) render();
+  }
+}
+
+// ========================================
+// ホスト：提出監視と自動段階移行
+// ========================================
+function stopHostSubmissionWatch(currentSession) {
+  const watch = currentSession?.hostWatch;
+  if (!watch) return;
+
+  currentSession.hostWatch = null;
+  watch.unsubscribe?.();
+}
+
+function syncHostSubmissionWatch(currentSession, game) {
+  const key = getHostStepKey(game);
+
+  if (currentSession.hostWatch?.key === key) return;
+
+  stopHostSubmissionWatch(currentSession);
+
+  const watch = {
+    key,
+    submissions: {},
+    loaded: false,
+    error: null,
+    unsubscribe: null
+  };
+
+  currentSession.hostWatch = watch;
+  currentSession.advanceError = null;
+  currentSession.advanceRetryAt = 0;
+
+  watch.unsubscribe = onValue(
+    ref(
+      db,
+      `rooms/${currentSession.roomCode}/submissions/${game.currentStep}`
+    ),
+    (snapshot) => {
+      if (
+        session !== currentSession ||
+        currentSession.hostWatch !== watch
+      ) {
+        return;
+      }
+
+      watch.submissions = snapshot.val() || {};
+      watch.loaded = true;
+      watch.error = null;
+      render();
+    },
+    (error) => {
+      if (
+        session !== currentSession ||
+        currentSession.hostWatch !== watch
+      ) {
+        return;
+      }
+
+      console.error("제출 목록 읽기 실패:", error);
+      watch.error =
+        "제출 목록을 읽지 못했습니다. 규칙을 확인한 뒤 방장 화면을 다시 열어 주세요.";
+      render();
+    }
+  );
+}
+
+function getSubmittedCount(watch, order) {
+  if (!watch?.loaded) return 0;
+
+  return order.filter((number, index) =>
+    validSubmission(watch.submissions[number], index)
+  ).length;
+}
+
+async function advanceIfReady() {
+  const currentSession = session;
+
+  if (
+    !currentSession ||
+    currentSession.role !== "host" ||
+    currentSession.meta?.status !== "PLAYING" ||
+    currentSession.connected !== true ||
+    currentSession.advancing ||
+    Date.now() < currentSession.advanceRetryAt ||
+    Object.values(currentSession.errors).some(Boolean)
+  ) {
+    return;
+  }
+
+  const validated = getValidatedGame();
+  const remaining = remainingTime();
+
+  if (
+    !validated ||
+    validated.game.phase !== "DRAWING" ||
+    remaining === null ||
+    remaining > 0
+  ) {
+    return;
+  }
+
+  const { game, order } = validated;
+  const watch = currentSession.hostWatch;
+
+  if (
+    !watch ||
+    watch.key !== getHostStepKey(game) ||
+    watch.error ||
+    !watch.loaded ||
+    getSubmittedCount(watch, order) !== order.length
+  ) {
+    return;
+  }
+
+  currentSession.advancing = true;
+  currentSession.advanceError = null;
+
+  const expectedStep = game.currentStep;
+  const expectedStartedAt = game.stepStartedAt;
+  const duration = currentSession.meta.stepDurationMs;
+  const totalSteps = currentSession.meta.relaySteps;
+  const roomPath = `rooms/${currentSession.roomCode}`;
+
+  try {
+    if (expectedStep === totalSteps) {
+      // 最終段階：両方を一度の更新で終了させます。
+      await update(ref(db, roomPath), {
+        "game/phase": "FINISHED",
+        "meta/status": "FINISHED"
+      });
+    } else {
+      const nextStartedAt = Math.max(
+        Math.ceil(serverNow(currentSession)),
+        game.stepEndsAt
+      );
+
+      // game だけをトランザクション対象にします。
+      // 他のホストタブが先に進めた場合は更新を中止します。
+      await runTransaction(
+        ref(db, `${roomPath}/game`),
+        (currentGame) => {
+          if (
+            session !== currentSession ||
+            currentSession.meta?.status !== "PLAYING" ||
+            !currentGame ||
+            currentGame.phase !== "DRAWING" ||
+            currentGame.currentStep !== expectedStep ||
+            currentGame.stepStartedAt !== expectedStartedAt
+          ) {
+            return;
+          }
+
+          return {
+            ...currentGame,
+            currentStep: expectedStep + 1,
+            stepStartedAt: nextStartedAt,
+            stepEndsAt: nextStartedAt + duration
+          };
+        },
+        {
+          applyLocally: false
+        }
+      );
+    }
+
+    if (session === currentSession) {
+      // 구독 결과가 도착하기 전 같은 요청을 반복하지 않도록 합니다.
+      currentSession.advanceRetryAt = Date.now() + RETRY_INTERVAL_MS;
+    }
+  } catch (error) {
+    if (session !== currentSession) return;
+
+    // 다른 방장 탭이 이미 완료했는지 다시 확인합니다.
+    try {
+      const latest = await get(ref(db, `${roomPath}/game`));
+
+      if (session !== currentSession) return;
+
+      const latestGame = latest.val();
+      const alreadyAdvanced = latestGame && (
+        latestGame.phase === "FINISHED" ||
+        latestGame.currentStep > expectedStep
+      );
+
+      if (!alreadyAdvanced) {
+        throw error;
+      }
+    } catch (checkError) {
+      if (session !== currentSession) return;
+
+      console.error("단계 전환 실패:", checkError);
+
+      currentSession.advanceError =
+        "단계 전환에 실패했습니다. 연결·쓰기 규칙을 확인해 주세요. " +
+        "3초 간격으로 재시도합니다.";
+    }
+
+    currentSession.advanceRetryAt = Date.now() + RETRY_INTERVAL_MS;
+  } finally {
+    if (session === currentSession) {
+      currentSession.advancing = false;
+      render();
+    }
+  }
+}
+
+// ========================================
+// 画面描画
+// ========================================
+function render() {
+  if (!session) return;
+
+  const currentSession = session;
+  const status = currentSession.meta?.status;
 
   if (status === "LOBBY") {
     lobbyScreens.hidden = false;
     hostScreen.hidden = true;
     studentScreen.hidden = true;
-    session.hasShownGame = false;
+    currentSession.hasShownGame = false;
+    stopHostSubmissionWatch(currentSession);
     setDrawingEnabled(false);
     return;
   }
 
-  // PLAYING을 확인하기 전에는 기존 대기실을 유지합니다.
-  if (status !== "PLAYING" && !session.hasShownGame) {
+  if (
+    status !== "PLAYING" &&
+    status !== "FINISHED" &&
+    !currentSession.hasShownGame
+  ) {
     setDrawingEnabled(false);
     return;
   }
 
-  session.hasShownGame = true;
+  currentSession.hasShownGame = true;
   lobbyScreens.hidden = true;
-  hostScreen.hidden = session.role !== "host";
-  studentScreen.hidden = session.role !== "player";
+  hostScreen.hidden = currentSession.role !== "host";
+  studentScreen.hidden = currentSession.role !== "player";
 
-  // 모든 조건이 확인될 때만 마지막에 다시 활성화합니다.
-  const error = Object.values(session.errors).find(Boolean);
+  const error = Object.values(currentSession.errors).find(Boolean);
 
   if (error) {
     setDrawingEnabled(false);
@@ -252,10 +816,23 @@ function render() {
     return;
   }
 
+  // meta와 game 구독 콜백의 도착 순서는 다를 수 있습니다.
+  if (
+    status === "FINISHED" ||
+    currentSession.game?.phase === "FINISHED"
+  ) {
+    stopHostSubmissionWatch(currentSession);
+    setDrawingEnabled(false);
+    showTimer(0);
+    setText(hostPhase, "종료");
+    setStatus("모든 단계가 끝났습니다. 그림 릴레이가 종료되었습니다.");
+    return;
+  }
+
   if (status !== "PLAYING") {
     setDrawingEnabled(false);
     showTimer(null);
-    setStatus("게임 진행 상태를 확인할 수 없습니다.");
+    setStatus("게임 진행 상태를 확인하는 중입니다.");
     return;
   }
 
@@ -264,24 +841,22 @@ function render() {
   if (!validated) {
     setDrawingEnabled(false);
     showTimer(null);
-    setStatus("게임 데이터를 기다리는 중입니다. 계속되면 DB를 확인해 주세요.");
+    setStatus("게임 데이터를 기다리는 중입니다.");
     return;
   }
 
   const { game, order } = validated;
-  const stepLabel = `${game.currentStep} / ${session.meta.relaySteps}`;
+  const stepLabel =
+    `${game.currentStep} / ${currentSession.meta.relaySteps}`;
 
   setText(hostStep, stepLabel);
   setText(studentStep, stepLabel);
   setText(hostPlayerCount, `${game.playerCount}명`);
-  setText(
-    hostPhase,
-    game.phase === "DRAWING" ? "그리기" : game.phase
-  );
+  setText(hostPhase, "그리기");
 
   if (
-    session.role === "player" &&
-    !order.includes(session.studentNumber)
+    currentSession.role === "player" &&
+    !order.includes(currentSession.studentNumber)
   ) {
     setDrawingEnabled(false);
     showTimer(null);
@@ -289,32 +864,10 @@ function render() {
     return;
   }
 
-  if (session.role === "player" && !context) {
-    setDrawingEnabled(false);
-    setStatus("이 브라우저에서는 그림판을 사용할 수 없습니다.");
-    return;
-  }
-
-  // 같은 단계의 구독 갱신은 그림을 지우지 않습니다.
-  if (session.role === "player") {
-    const nextKey = [
-      session.roomCode,
-      session.studentNumber,
-      game.currentStep,
-      game.stepStartedAt
-    ].join(":");
-
-    if (canvasStepKey !== nextKey) {
-      finishStroke();
-      clearCanvas();
-      canvasStepKey = nextKey;
-    }
-  }
-
   const remaining = remainingTime();
   showTimer(remaining);
 
-  if (session.connected !== true) {
+  if (currentSession.connected !== true) {
     setDrawingEnabled(false);
     setStatus("서버 연결이 끊겼습니다. 재연결될 때까지 입력을 잠급니다.");
     return;
@@ -326,34 +879,84 @@ function render() {
     return;
   }
 
-  if (game.phase !== "DRAWING") {
+  if (currentSession.role === "host") {
     setDrawingEnabled(false);
-    setStatus("현재는 그리기 단계가 아닙니다.");
+    syncHostSubmissionWatch(currentSession, game);
+
+    const watch = currentSession.hostWatch;
+    const count = getSubmittedCount(watch, order);
+
+    if (watch?.error) {
+      setStatus(watch.error);
+    } else if (currentSession.advanceError) {
+      setStatus(currentSession.advanceError);
+    } else if (currentSession.advancing) {
+      setStatus(
+        game.currentStep === currentSession.meta.relaySteps
+          ? "모든 그림이 제출되었습니다. 게임을 종료하는 중입니다."
+          : "모든 그림이 제출되었습니다. 다음 단계로 이동하는 중입니다."
+      );
+    } else if (remaining <= 0) {
+      setStatus(
+        `그림 제출을 기다리고 있습니다. ${count} / ${order.length}명`
+      );
+    } else {
+      setStatus("학생들이 그림을 그리고 있습니다.");
+    }
+
+    void advanceIfReady();
     return;
   }
 
-  if (remaining <= 0) {
+  if (!context) {
     setDrawingEnabled(false);
-    setStatus("시간이 종료되었습니다. 현재 버전에는 자동 단계 전환이 없습니다.");
+    setStatus("이 브라우저에서는 그림판을 사용할 수 없습니다.");
     return;
   }
 
-  if (session.role === "player") {
-    setDrawingEnabled(true);
-    setStatus("그림을 그려 주세요. 시간이 끝나면 입력이 잠깁니다.");
-  } else {
+  const key = getCanvasStepKey(currentSession, game);
+
+  if (
+    currentSession.preparation?.key !== key ||
+    !currentSession.preparation.ready ||
+    canvasStepKey !== key
+  ) {
     setDrawingEnabled(false);
-    setStatus("학생들이 그림을 그리고 있습니다.");
+    void prepareCanvas(currentSession, validated);
+
+    setStatus(
+      currentSession.preparation?.error ||
+      (game.currentStep === 1
+        ? "그림판을 준비하는 중입니다."
+        : "이전 참가자의 그림을 불러오는 중입니다.")
+    );
+    return;
   }
+
+  const hasSubmission =
+    currentSession.submission?.key === key;
+
+  if (remaining <= 0 || hasSubmission) {
+    setDrawingEnabled(false);
+    void submitExpiredDrawing();
+    setStatus(getSubmissionMessage());
+    return;
+  }
+
+  setDrawingEnabled(canDrawNow());
+
+  setStatus(
+    game.currentStep === 1
+      ? "그림을 그려 주세요. 시간이 끝나면 자동으로 저장합니다."
+      : "전달받은 그림에 이어 그려 주세요. 시간이 끝나면 자동으로 저장합니다."
+  );
 }
 
 // ========================================
-// 캔버스 처리
+// キャンバス
 // ========================================
 function clearCanvas() {
-  if (!context) {
-    return;
-  }
+  if (!context) return;
 
   context.save();
   context.globalCompositeOperation = "source-over";
@@ -365,9 +968,7 @@ function clearCanvas() {
 function getPoint(event) {
   const rectangle = canvas.getBoundingClientRect();
 
-  if (!rectangle.width || !rectangle.height) {
-    return null;
-  }
+  if (!rectangle.width || !rectangle.height) return null;
 
   return {
     x: (event.clientX - rectangle.left) *
@@ -379,9 +980,8 @@ function getPoint(event) {
 
 function applyBrush() {
   context.globalCompositeOperation = "source-over";
-  context.strokeStyle = selectedTool === "eraser"
-    ? "#ffffff"
-    : penColor.value;
+  context.strokeStyle =
+    selectedTool === "eraser" ? "#ffffff" : penColor.value;
   context.fillStyle = context.strokeStyle;
   context.lineWidth = Number(penWidth.value);
   context.lineCap = "round";
@@ -415,34 +1015,34 @@ function drawLine(from, to) {
 
 function finishStroke() {
   const pointerId = activePointerId;
-
   activePointerId = null;
   previousPoint = null;
 
-  if (pointerId !== null) {
-    try {
-      if (canvas.hasPointerCapture(pointerId)) {
-        canvas.releasePointerCapture(pointerId);
-      }
-    } catch {
-      // 포인터가 이미 해제된 경우에는 추가 처리가 필요 없습니다.
+  if (pointerId === null) return;
+
+  try {
+    if (canvas.hasPointerCapture(pointerId)) {
+      canvas.releasePointerCapture(pointerId);
     }
+  } catch {
+    // 이미 해제된 포인터는 무시합니다.
   }
 }
 
 function selectTool(tool) {
   finishStroke();
   selectedTool = tool;
-  penButton.setAttribute(
-    "aria-pressed",
-    String(tool === "pen")
-  );
+
+  penButton.setAttribute("aria-pressed", String(tool === "pen"));
   eraserButton.setAttribute(
     "aria-pressed",
     String(tool === "eraser")
   );
 }
 
+// ========================================
+// 그림판 이벤트
+// ========================================
 canvas.addEventListener("pointerdown", (event) => {
   if (
     !canDrawNow() ||
@@ -454,10 +1054,7 @@ canvas.addEventListener("pointerdown", (event) => {
   }
 
   const point = getPoint(event);
-
-  if (!point) {
-    return;
-  }
+  if (!point) return;
 
   event.preventDefault();
 
@@ -473,11 +1070,8 @@ canvas.addEventListener("pointerdown", (event) => {
 });
 
 canvas.addEventListener("pointermove", (event) => {
-  if (event.pointerId !== activePointerId) {
-    return;
-  }
+  if (event.pointerId !== activePointerId) return;
 
-  // 타이머 갱신 사이에 마감 시각을 넘었어도 입력을 차단합니다.
   if (!canDrawNow()) {
     finishStroke();
     render();
@@ -487,19 +1081,14 @@ canvas.addEventListener("pointermove", (event) => {
   event.preventDefault();
 
   const point = getPoint(event);
-
-  if (!point || !previousPoint) {
-    return;
-  }
+  if (!point || !previousPoint) return;
 
   drawLine(previousPoint, point);
   previousPoint = point;
 });
 
 function endPointer(event) {
-  if (event.pointerId === activePointerId) {
-    finishStroke();
-  }
+  if (event.pointerId === activePointerId) finishStroke();
 }
 
 canvas.addEventListener("pointerup", endPointer);
@@ -509,34 +1098,23 @@ canvas.addEventListener("contextmenu", (event) => {
   event.preventDefault();
 });
 
-penButton.addEventListener("click", () => {
-  selectTool("pen");
-});
-
-eraserButton.addEventListener("click", () => {
-  selectTool("eraser");
-});
-
-penColor.addEventListener("input", () => {
-  selectTool("pen");
-});
+penButton.addEventListener("click", () => selectTool("pen"));
+eraserButton.addEventListener("click", () => selectTool("eraser"));
+penColor.addEventListener("input", () => selectTool("pen"));
 
 penWidth.addEventListener("input", () => {
   setText(penWidthValue, penWidth.value);
 });
 
 clearButton.addEventListener("click", () => {
-  if (!canDrawNow()) {
-    return;
-  }
+  if (!canDrawNow()) return;
 
   finishStroke();
 
-  if (!window.confirm("현재 그림을 모두 지울까요?")) {
+  if (!window.confirm("전달받은 그림을 포함해 현재 그림을 모두 지울까요?")) {
     return;
   }
 
-  // 확인 창이 열린 동안 시간이 종료될 수 있습니다.
   if (canDrawNow()) {
     clearCanvas();
   } else {
@@ -552,20 +1130,23 @@ document.addEventListener("visibilitychange", () => {
 });
 
 // ========================================
-// 구독 시작·정리
+// 구독 시작 및 정리
 // ========================================
 function stopWatching() {
-  // 먼저 세션을 무효화해 이전 콜백을 차단합니다.
+  const oldSession = session;
+
+  // 이전 비동기 작업이 새 화면을 변경하지 못하도록 합니다.
   session = null;
 
-  for (const unsubscribe of cleanups) {
-    unsubscribe();
-  }
+  stopHostSubmissionWatch(oldSession);
 
+  for (const unsubscribe of cleanups) unsubscribe();
   cleanups = [];
+
   clearInterval(timerId);
   timerId = null;
 
+  canvasStepKey = null;
   finishStroke();
   setDrawingEnabled(false);
 
@@ -594,6 +1175,15 @@ export function watchGameScreen({
     offset: null,
     connected: false,
     hasShownGame: false,
+
+    preparation: null,
+    submission: null,
+
+    hostWatch: null,
+    advancing: false,
+    advanceError: null,
+    advanceRetryAt: 0,
+
     errors: {
       meta: null,
       game: null,
@@ -603,7 +1193,6 @@ export function watchGameScreen({
   };
 
   session = nextSession;
-  canvasStepKey = null;
 
   clearCanvas();
   selectTool("pen");
@@ -611,39 +1200,34 @@ export function watchGameScreen({
   setText(hostRoomCode, roomCode);
   setText(studentRoomCode, roomCode);
   setText(studentNumberElement, studentNumber ?? "");
-
   setText(hostStep, "-");
   setText(studentStep, "-");
   setText(hostPlayerCount, "-");
   setText(hostPhase, "-");
+  setText(penWidthValue, penWidth.value);
   showTimer(null);
 
   function listen(path, errorKey, applyValue, errorMessage) {
     const unsubscribe = onValue(
       ref(db, path),
       (snapshot) => {
-        if (session !== nextSession) {
-          return;
-        }
+        if (session !== nextSession) return;
 
         nextSession.errors[errorKey] = null;
         applyValue(snapshot.val());
         render();
       },
       (error) => {
-        if (session !== nextSession) {
-          return;
-        }
+        if (session !== nextSession) return;
 
         console.error(`${path} 읽기 실패:`, error);
         nextSession.errors[errorKey] = errorMessage;
 
-        // 게임 시작 전 오류도 기존 화면에서 확인할 수 있습니다.
         const notice = document.getElementById(
           role === "host" ? "appStatus" : "joinStatus"
         );
-        setText(notice, errorMessage);
 
+        setText(notice, errorMessage);
         render();
       }
     );
@@ -673,10 +1257,7 @@ export function watchGameScreen({
     ".info/serverTimeOffset",
     "clock",
     (value) => {
-      nextSession.offset =
-        typeof value === "number" && Number.isFinite(value)
-          ? value
-          : null;
+      nextSession.offset = Number.isFinite(value) ? value : null;
     },
     "서버 시간 정보를 읽지 못했습니다."
   );
@@ -694,5 +1275,8 @@ export function watchGameScreen({
   render();
 }
 
+// ========================================
+// 초기 상태
+// ========================================
 setDrawingEnabled(false);
 clearCanvas();

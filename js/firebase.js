@@ -15,6 +15,7 @@ import {
   set,
   get,
   update,
+  runTransaction,
   onValue,
   onDisconnect,
   serverTimestamp
@@ -55,6 +56,7 @@ export {
   set,
   get,
   update,
+  runTransaction,
   onValue,
   onDisconnect,
   serverTimestamp
